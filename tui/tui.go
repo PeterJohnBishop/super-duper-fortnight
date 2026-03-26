@@ -3,23 +3,19 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"super-duper-fortnight/clkup"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
 // style
-
 var (
-	baseStyle = lipgloss.NewStyle().Padding(1, 2)
+	baseStyle = lipgloss.NewStyle().Padding(0, 2)
 
 	menuStyle = lipgloss.NewStyle().
 			Width(30).
@@ -28,25 +24,16 @@ var (
 			Border(lipgloss.NormalBorder(), false, true, false, false).
 			BorderForeground(lipgloss.Color("#5A189A"))
 
-	titleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7B2CBF")).
-			Bold(true).
-			Border(lipgloss.NormalBorder(), false, false, true, false).
-			MarginBottom(1)
-
 	statBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#5A189A")).
 			Padding(0, 2).
-			MarginRight(2)
+			MarginRight(2).
+			Align(lipgloss.Center)
 
 	statLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#9D4EDD"))
 	statValueStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E0AAFF"))
 )
-
-// state
-
-type uiState int
 
 const (
 	stateInit uiState = iota
@@ -56,26 +43,14 @@ const (
 	stateLoaded
 )
 
-// MSGs
-
-type LogMsg string
-
-type InitDataMsg struct {
-	User       clkup.User
-	Workspaces []clkup.Workspace
-}
-type PlanLoadedMsg struct {
-	TeamID string
-	PlanID int
-}
-type FanOutCompleteMsg struct {
-	Spaces      []clkup.Space
-	Folders     []clkup.Folder
-	Lists       []clkup.List
-	Tasks       []clkup.Task
-	Performance clkup.Performance
-}
-type ErrMsg struct{ err error }
+const (
+	DepthWorkspaces ViewDepth = iota
+	DepthSpaces
+	DepthFolders
+	DepthLists
+	DepthTasks
+	DepthTaskDetails
+)
 
 // model
 type dashboardModel struct {
@@ -93,22 +68,21 @@ type dashboardModel struct {
 	err    error
 
 	// Selection & Focus
-	cursor       int
 	activeTeamID string
-	focusTable   bool
+	depth        ViewDepth
 
-	// UI
-	taskTable table.Model
+	// Cursors & Offsets
+	cursorWorkspace  int
+	cursorSpace      int
+	cursorFolder     int
+	cursorList       int
+	cursorTask       int
+	taskScrollOffset int
 
 	// Data Store
-	user       clkup.User
-	workspaces []clkup.Workspace
-	spaces     []clkup.Space
-	folders    []clkup.Folder
-	lists      []clkup.List
-	tasks      []clkup.Task
-
-	perf clkup.Performance
+	user           clkup.User
+	workspaces     []clkup.Workspace
+	workspaceCache map[string]*WorkspaceData
 }
 
 func InitialModel(client *clkup.APIClient) dashboardModel {
@@ -119,11 +93,12 @@ func InitialModel(client *clkup.APIClient) dashboardModel {
 	client.LogChan = logChan
 
 	return dashboardModel{
-		apiClient: client,
-		spinner:   s,
-		state:     stateInit,
-		status:    "Fetching User and Workspace data...",
-		logChan:   logChan,
+		apiClient:      client,
+		spinner:        s,
+		state:          stateInit,
+		status:         "Fetching User and Workspace data...",
+		logChan:        logChan,
+		workspaceCache: make(map[string]*WorkspaceData),
 	}
 }
 
@@ -149,74 +124,181 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
-		if m.state == stateLoaded {
-			m.taskTable.SetWidth(m.width - 36)
-			m.taskTable.SetHeight(m.height - 15)
-		}
 		return m, nil
 
 	case tea.KeyMsg:
-		// Global quit
-		if msg.String() == "ctrl+c" {
+		if msg.String() == "ctrl+c" || msg.String() == "q" {
 			return m, tea.Quit
 		}
 
-		// right pane
-		if m.focusTable {
-			switch msg.String() {
-			case "esc", "left":
-				m.focusTable = false
-				m.taskTable.Blur()
-				return m, nil
-			case "q":
-				return m, tea.Quit
-			default:
-				// Pass all other keys (j, k, up, down) to the table
-				m.taskTable, cmd = m.taskTable.Update(msg)
-				return m, cmd
-			}
-		}
-
-		// left pane
 		switch msg.String() {
-		case "q":
-			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.workspaces)-1 {
-				m.cursor++
-			}
-		case "right":
-			if m.state == stateLoaded && string(m.workspaces[m.cursor].ID) == m.activeTeamID {
-				m.focusTable = true
-				m.taskTable.Focus()
-			}
-		case "enter":
-			if len(m.workspaces) > 0 && (m.state == stateIdle || m.state == stateLoaded) {
-				selectedID := m.workspaces[m.cursor].ID
-
-				// If they hit enter on the already-loaded workspace, just jump to the table
-				if m.state == stateLoaded && string(selectedID) == m.activeTeamID {
-					m.focusTable = true
-					m.taskTable.Focus()
-					return m, nil
+		case "o":
+			url := m.getCurrentSelectionURL()
+			if url != "" {
+				err := OpenBrowser(url)
+				if err != nil {
+					m.logs = append(m.logs, fmt.Sprintf("Failed to open browser: %v", err))
+				} else {
+					m.logs = append(m.logs, fmt.Sprintf("Opened in browser: %s", url))
 				}
+				if len(m.logs) > 4 {
+					m.logs = m.logs[len(m.logs)-4:]
+				}
+			} else {
+				m.logs = append(m.logs, "No valid URL for current selection.")
+				if len(m.logs) > 4 {
+					m.logs = m.logs[len(m.logs)-4:]
+				}
+			}
+			return m, nil
 
-				// Otherwise, start a fresh fetch
-				m.activeTeamID = string(selectedID)
-				m.state = stateFetchingPlan
-				m.status = fmt.Sprintf("Fetching plan for workspace '%s'...", m.workspaces[m.cursor].Name)
+		case "j", "down":
+			if m.depth == DepthTaskDetails {
+				m.taskScrollOffset++
+				return m, nil
+			}
 
-				m.spaces = nil
-				m.folders = nil
-				m.lists = nil
-				m.tasks = nil
+			leftItems, _, _ := m.getLeftPane()
+			maxIdx := len(leftItems) - 1
+			if maxIdx < 0 {
+				break
+			}
+			switch m.depth {
+			case DepthWorkspaces:
+				if m.cursorWorkspace < maxIdx {
+					m.cursorWorkspace++
+				}
+			case DepthSpaces:
+				if m.cursorSpace < maxIdx {
+					m.cursorSpace++
+					m.cursorFolder, m.cursorList, m.cursorTask = 0, 0, 0
+				}
+			case DepthFolders:
+				if m.cursorFolder < maxIdx {
+					m.cursorFolder++
+					m.cursorList, m.cursorTask = 0, 0
+				}
+			case DepthLists:
+				if m.cursorList < maxIdx {
+					m.cursorList++
+					m.cursorTask = 0
+				}
+			case DepthTasks:
+				if m.cursorTask < maxIdx {
+					m.cursorTask++
+					m.taskScrollOffset = 0
+				}
+			}
 
-				return m, tea.Batch(m.spinner.Tick, fetchPlanCmd(m.apiClient, m.activeTeamID))
+		case "k", "up":
+			if m.depth == DepthTaskDetails {
+				if m.taskScrollOffset > 0 {
+					m.taskScrollOffset--
+				}
+				return m, nil
+			}
+
+			switch m.depth {
+			case DepthWorkspaces:
+				if m.cursorWorkspace > 0 {
+					m.cursorWorkspace--
+				}
+			case DepthSpaces:
+				if m.cursorSpace > 0 {
+					m.cursorSpace--
+					m.cursorFolder, m.cursorList, m.cursorTask = 0, 0, 0
+				}
+			case DepthFolders:
+				if m.cursorFolder > 0 {
+					m.cursorFolder--
+					m.cursorList, m.cursorTask = 0, 0
+				}
+			case DepthLists:
+				if m.cursorList > 0 {
+					m.cursorList--
+					m.cursorTask = 0
+				}
+			case DepthTasks:
+				if m.cursorTask > 0 {
+					m.cursorTask--
+					m.taskScrollOffset = 0
+				}
+			}
+
+		case "l", "right", "enter", " ":
+			if m.depth == DepthTaskDetails {
+				return m, nil
+			}
+			if m.depth == DepthTasks {
+				m.depth = DepthTaskDetails
+				m.taskScrollOffset = 0
+				return m, nil
+			}
+
+			leftItems, _, _ := m.getLeftPane()
+			if len(leftItems) == 0 {
+				return m, nil
+			}
+
+			switch m.depth {
+			case DepthWorkspaces:
+				if m.state == stateIdle || m.state == stateLoaded {
+					selectedWS := string(m.workspaces[m.cursorWorkspace].ID)
+
+					if _, exists := m.workspaceCache[selectedWS]; exists {
+						m.activeTeamID = selectedWS
+						m.depth = DepthSpaces
+						m.cursorSpace, m.cursorFolder, m.cursorList, m.cursorTask = 0, 0, 0, 0
+						return m, nil
+					}
+
+					m.activeTeamID = selectedWS
+					m.state = stateFetchingPlan
+					m.status = fmt.Sprintf("Fetching plan for workspace '%s'...", m.workspaces[m.cursorWorkspace].Name)
+
+					return m, tea.Batch(m.spinner.Tick, fetchPlanCmd(m.apiClient, m.activeTeamID))
+				}
+			case DepthSpaces:
+				m.depth = DepthFolders
+				m.cursorFolder = 0
+			case DepthFolders:
+				item := leftItems[m.cursorFolder]
+				if item.Type == "folder" {
+					m.depth = DepthLists
+					m.cursorList = 0
+				} else if item.Type == "list" {
+					m.depth = DepthTasks
+					m.cursorTask = 0
+				}
+			case DepthLists:
+				m.depth = DepthTasks
+				m.cursorTask = 0
+			}
+
+		case "h", "left", "esc", "backspace":
+			switch m.depth {
+			case DepthSpaces:
+				m.depth = DepthWorkspaces
+			case DepthFolders:
+				m.depth = DepthSpaces
+			case DepthLists:
+				m.depth = DepthFolders
+			case DepthTasks:
+				wd := m.workspaceCache[m.activeTeamID]
+				if wd != nil && len(wd.Spaces) > 0 && m.cursorSpace < len(wd.Spaces) {
+					sID := string(wd.Spaces[m.cursorSpace].ID)
+					folders := wd.FoldersBySpace[sID]
+					if m.cursorFolder < len(folders) {
+						m.depth = DepthLists
+					} else {
+						m.depth = DepthFolders
+					}
+				} else {
+					m.depth = DepthFolders
+				}
+			case DepthTaskDetails:
+				m.depth = DepthTasks
+				m.taskScrollOffset = 0
 			}
 		}
 
@@ -230,6 +312,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.user = msg.User
 		m.workspaces = msg.Workspaces
 		m.state = stateIdle
+		m.depth = DepthWorkspaces
 		return m, nil
 
 	case PlanLoadedMsg:
@@ -249,57 +332,16 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fetchHierarchyCmd(m.apiClient, msg.TeamID)
 
 	case LogMsg:
-		// Append the new log
 		m.logs = append(m.logs, string(msg))
-
 		if len(m.logs) > 8 {
 			m.logs = m.logs[1:]
 		}
-
-		//call the command again to wait for the next log
 		return m, waitForLog(m.logChan)
 
 	case FanOutCompleteMsg:
-		m.spaces = msg.Spaces
-		m.folders = msg.Folders
-		m.lists = msg.Lists
-		m.tasks = msg.Tasks
-		m.perf = msg.Performance
-
-		// tasks table
-		columns := []table.Column{
-			{Title: "Task ID", Width: 12},
-			{Title: "Status", Width: 15},
-			{Title: "Name", Width: 60},
-		}
-
-		var rows []table.Row
-		for _, t := range m.tasks {
-			rows = append(rows, table.Row{string(t.Id), t.Status.Status, t.Name})
-		}
-
-		m.taskTable = table.New(
-			table.WithColumns(columns),
-			table.WithRows(rows),
-			table.WithFocused(true),
-			table.WithHeight(15),
-		)
-
-		// Styling the table
-		s := table.DefaultStyles()
-		s.Header = s.Header.
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			BorderBottom(true).
-			Bold(false)
-		s.Selected = s.Selected.
-			Foreground(lipgloss.Color("229")).
-			Background(lipgloss.Color("57")).
-			Bold(false)
-		m.taskTable.SetStyles(s)
-
+		m.workspaceCache[msg.TeamID] = msg.Data
 		m.state = stateLoaded
-		m.focusTable = true
+		m.depth = DepthWorkspaces
 		return m, nil
 
 	case ErrMsg:
@@ -317,18 +359,24 @@ func (m dashboardModel) View() string {
 		return fmt.Sprintf("Error: %v\nPress 'q' to quit.", m.err)
 	}
 
+	// safe width calculation for text elements to prevent horizontal wrap-around (in JSON payloads)
+	safeTextWidth := m.width - 4
+
+	// header
 	var header string
 	if m.state != stateInit {
 		headerStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E0AAFF")).
 			Padding(0, 1).
 			MarginBottom(1).
-			Italic(true)
+			Italic(true).
+			Width(safeTextWidth).
+			MaxWidth(safeTextWidth)
 
 		leftSide := fmt.Sprintf("%s | %s - %s", m.user.ID, m.user.Initials, m.user.Email)
 		rightSide := fmt.Sprintf("[ %s ]", m.user.Timezone)
 
-		spaceCount := m.width - lipgloss.Width(leftSide) - lipgloss.Width(rightSide) - 4
+		spaceCount := m.width - lipgloss.Width(leftSide) - lipgloss.Width(rightSide) - 6
 
 		var headerContent string
 		if spaceCount > 0 {
@@ -337,260 +385,106 @@ func (m dashboardModel) View() string {
 		} else {
 			headerContent = leftSide + " " + rightSide
 		}
-
 		header = headerStyle.Render(headerContent)
 	}
 
-	// left pane
-	var menuItems []string
-	menuTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7B2CBF")).Render("Workspaces")
-	menuItems = append(menuItems, menuTitle, "")
-
-	if m.state == stateInit {
-		menuItems = append(menuItems, "Loading...")
-	} else {
-		for i, w := range m.workspaces {
-			cursor := "  "
-			if m.cursor == i && !m.focusTable {
-				cursor = "> "
-			}
-
-			style := lipgloss.NewStyle()
-			if string(w.ID) == m.activeTeamID {
-				style = style.Foreground(lipgloss.Color("#E0AAFF")).Bold(true)
-			} else if m.cursor == i && !m.focusTable {
-				style = style.Foreground(lipgloss.Color("#9D4EDD"))
-			} else {
-				style = style.Foreground(lipgloss.Color("240"))
-			}
-
-			menuItems = append(menuItems, fmt.Sprintf("%s%s", cursor, style.Render(w.Name)))
-		}
-	}
-
-	leftPane := menuStyle.Render(strings.Join(menuItems, "\n"))
-
-	// right pane
-	var rightPane string
-
-	if m.state == stateInit || m.state == stateFetchingPlan || m.state == stateFetchingData {
-		rightPane = fmt.Sprintf("\n %s %s\n", m.spinner.View(), m.status)
-
-	} else if m.state == stateIdle {
-		rightPane = "\n\n  <-- Select a Workspace and press Enter to load data."
-
-	} else if m.state == stateLoaded {
-		activeName := "Unknown"
-		for _, w := range m.workspaces {
-			if string(w.ID) == m.activeTeamID {
-				activeName = w.Name
-				break
-			}
-		}
-
-		title := titleStyle.Render(fmt.Sprintf("Dashboard | %s", activeName))
-
-		statSpaces := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Spaces"), statValueStyle.Render(fmt.Sprint(len(m.spaces)))))
-		statFolders := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Folders"), statValueStyle.Render(fmt.Sprint(len(m.folders)))))
-		statLists := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Lists"), statValueStyle.Render(fmt.Sprint(len(m.lists)))))
-		statTasks := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Tasks In Memory"), statValueStyle.Render(fmt.Sprint(len(m.tasks)))))
-
-		statsRow := lipgloss.JoinHorizontal(lipgloss.Top, statSpaces, statFolders, statLists, statTasks)
-
-		helpText := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Press 'esc' or 'left' to return to menu • 'q' to quit")
-		if !m.focusTable {
-			helpText = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Press 'enter' or 'right' to browse tasks • 'q' to quit")
-		}
-
-		rightPane = lipgloss.JoinVertical(lipgloss.Left,
-			title,
-			"\n",
-			statsRow,
-			"\n",
-			m.taskTable.View(),
-			"\n",
-			helpText,
-		)
-	}
-
+	// footer
 	logBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("240")).
-		Width(m.width-4).
-		Height(10).
-		Padding(0, 1).
-		MarginTop(1)
+		Width(m.width-8).
+		Height(5).
+		Padding(0, 1)
 
 	logTitle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("--- Live API Event Log ---")
-	logContent := strings.Join(m.logs, "\n")
 
+	displayLogs := m.logs
+	if len(displayLogs) > 4 {
+		displayLogs = displayLogs[len(displayLogs)-4:]
+	}
+	logContent := strings.Join(displayLogs, "\n")
 	bottomPane := logBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, logTitle, logContent))
 
-	// combine layout
-	topPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	helpTextStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		MarginBottom(1).
+		Width(safeTextWidth).
+		MaxWidth(safeTextWidth)
 
-	finalView := lipgloss.JoinVertical(lipgloss.Left, header, topPanes, bottomPane)
+	helpText := helpTextStyle.Render("Navigate: h j k l | Back: esc | Enter/Space: select | o: open in browser | q: quit")
 
-	if m.state == stateLoaded {
-		perfStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E0AAFF")).
-			Padding(0, 1).
-			MarginTop(1).
-			Italic(true)
+	var footer string
+	if (m.state == stateLoaded || m.state == stateIdle) && m.activeTeamID != "" {
+		if wd, ok := m.workspaceCache[m.activeTeamID]; ok {
+			perfStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#E0AAFF")).
+				Padding(0, 1).
+				MarginTop(1).
+				Italic(true).
+				Width(safeTextWidth).
+				MaxWidth(safeTextWidth)
 
-		perfText := fmt.Sprintf("Fetch completed in %s | Tasks Per Second: %s | Est. RPM: %s",
-			m.perf.Duration, m.perf.TPS, m.perf.RPM)
-
-		footer := perfStyle.Render(perfText)
-		finalView = lipgloss.JoinVertical(lipgloss.Left, finalView, footer)
-	}
-
-	return baseStyle.Render(finalView)
-
-}
-
-func fetchPlanCmd(client *clkup.APIClient, teamID string) tea.Cmd {
-	return func() tea.Msg {
-		plan, err := client.GetPlan(teamID)
-		if err != nil {
-			return ErrMsg{err}
-		}
-		return PlanLoadedMsg{
-			TeamID: teamID,
-			PlanID: plan.PlanID,
+			perfText := fmt.Sprintf("Last fetch completed in %s | Tasks Per Second: %s | Est. RPM: %s",
+				wd.Performance.Duration, wd.Performance.TPS, wd.Performance.RPM)
+			footer = perfStyle.Render(perfText)
 		}
 	}
-}
 
-func fetchInitDataCmd(client *clkup.APIClient) tea.Cmd {
-	return func() tea.Msg {
-		var user clkup.User
-		var workspaces []clkup.Workspace
-		var err error
-
-		for attempts := 0; attempts < 3; attempts++ {
-			user, err = client.GetAuthorizedUser()
-			if err == nil {
-				break
-			}
-			time.Sleep(1 * time.Second)
-		}
-		if err != nil {
-			return ErrMsg{fmt.Errorf("failed to fetch user after 3 attempts: %w", err)}
-		}
-
-		for attempts := 0; attempts < 3; attempts++ {
-			workspaces, err = client.GetAuthorizedWorkspaces()
-			if err == nil {
-				break
-			}
-			time.Sleep(1 * time.Second)
-		}
-		if err != nil {
-			return ErrMsg{fmt.Errorf("workspace API error after 3 attempts: %w", err)}
-		}
-
-		if len(workspaces) == 0 {
-			return ErrMsg{fmt.Errorf("success, but workspace array was empty")}
-		}
-
-		return InitDataMsg{
-			User:       user,
-			Workspaces: workspaces,
-		}
+	var bottomStack string
+	if footer != "" {
+		bottomStack = lipgloss.JoinVertical(lipgloss.Left, helpText, bottomPane, footer)
+	} else {
+		bottomStack = lipgloss.JoinVertical(lipgloss.Left, helpText, bottomPane)
 	}
-}
-func fetchHierarchyCmd(client *clkup.APIClient, teamID string) tea.Cmd {
-	return func() tea.Msg {
-		start := time.Now()
-		var g errgroup.Group
-		var mu sync.Mutex
-		var finalLists []clkup.List
-		var finalSpaces []clkup.Space
-		var finalFolders []clkup.Folder
-		var finalTasks []clkup.Task
 
-		// concurrent task fetch
-		g.Go(func() error {
-			tasks, err := client.GetAllTasks(teamID)
-			if err == nil {
-				finalTasks = tasks
-			}
-			return err
-		})
-
-		// concurrent hierarchy fetch
-		g.Go(func() error {
-			spaces, err := client.GetSpaces(teamID)
-			if err != nil {
-				return err
-			}
-
-			mu.Lock()
-			finalSpaces = append(finalSpaces, spaces...)
-			mu.Unlock()
-
-			for _, space := range spaces {
-				sID := string(space.ID)
-
-				// Fetch Folders for this Space
-				g.Go(func() error {
-					folders, err := client.GetFolders(sID)
-					if err != nil {
-						return err
-					}
-
-					mu.Lock()
-					finalFolders = append(finalFolders, folders...)
-					mu.Unlock()
-
-					// Fan out into each folder to get its Lists
-					for _, folder := range folders {
-						fID := string(folder.ID)
-						g.Go(func() error {
-							lists, err := client.GetLists(fID)
-							if err != nil {
-								return err
-							}
-
-							mu.Lock()
-							finalLists = append(finalLists, lists...)
-							mu.Unlock()
-							return nil
-						})
-					}
-					return nil
-				})
-
-				// Fetch Folderless Lists for this Space concurrently
-				g.Go(func() error {
-					folderlessLists, err := client.GetFolderlessLists(sID)
-					if err != nil {
-						return err
-					}
-
-					mu.Lock()
-					finalLists = append(finalLists, folderlessLists...)
-					mu.Unlock()
-					return nil
-				})
-			}
-
-			return nil
-		})
-
-		if err := g.Wait(); err != nil {
-			return ErrMsg{err}
+	if m.state == stateInit || m.state == stateFetchingPlan || m.state == stateFetchingData {
+		loadingContent := lipgloss.NewStyle().Margin(2, 0).Render(fmt.Sprintf("%s %s", m.spinner.View(), m.status))
+		if footer != "" {
+			return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, loadingContent, bottomPane, footer))
 		}
-
-		perf := clkup.CalculatePerformance(len(finalTasks), start)
-
-		return FanOutCompleteMsg{
-			Spaces:      finalSpaces,
-			Folders:     finalFolders,
-			Lists:       finalLists,
-			Tasks:       finalTasks,
-			Performance: perf,
-		}
+		return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, loadingContent, bottomPane))
 	}
+
+	sCount, fCount, lCount, tCount := m.getStats()
+	statSpaces := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Spaces"), statValueStyle.Render(sCount)))
+	statFolders := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Folders"), statValueStyle.Render(fCount)))
+	statLists := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Lists"), statValueStyle.Render(lCount)))
+	statTasks := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Tasks"), statValueStyle.Render(tCount)))
+
+	statsRowStyle := lipgloss.NewStyle().MarginBottom(1)
+	statsRow := statsRowStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, statSpaces, statFolders, statLists, statTasks))
+
+	breadcrumbsStyle := lipgloss.NewStyle().MarginBottom(1).Width(safeTextWidth).MaxWidth(safeTextWidth)
+	breadcrumbs := breadcrumbsStyle.Render(m.getBreadcrumbs())
+
+	topStack := lipgloss.JoinVertical(lipgloss.Left, header, statsRow, breadcrumbs)
+
+	occupiedHeight := lipgloss.Height(topStack) + lipgloss.Height(bottomStack)
+
+	paneHeight := m.height - occupiedHeight - 2
+	if paneHeight < 5 {
+		paneHeight = 5
+	}
+
+	paneWidth := (m.width - 4) / 2
+	if paneWidth < 10 {
+		paneWidth = 10
+	}
+
+	leftItems, leftTitle, leftCursor := m.getLeftPane()
+	rightItems, rightTitle, rightRawText := m.getRightPane()
+
+	leftActive := (m.depth != DepthTaskDetails)
+	rightActive := (m.depth == DepthTaskDetails)
+
+	leftPane := renderPane(leftItems, leftTitle, "", leftCursor, 0, paneWidth, paneHeight, leftActive)
+	rightPane := renderPane(rightItems, rightTitle, rightRawText, -1, m.taskScrollOffset, paneWidth, paneHeight, rightActive)
+
+	splitPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+
+	return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
+		topStack,
+		splitPanes,
+		bottomStack,
+	))
 }
