@@ -392,7 +392,7 @@ func getListIDFromTask(t clkup.Task) string {
 	return ""
 }
 
-func (m dashboardModel) getBreadcrumbs() string {
+func (m dashboardModel) getBreadcrumbs(maxWidth int) string {
 	if m.state != stateLoaded && m.state != stateIdle {
 		return ""
 	}
@@ -402,62 +402,66 @@ func (m dashboardModel) getBreadcrumbs() string {
 	}
 
 	wd := m.workspaceCache[m.activeTeamID]
-	if wd == nil {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#9D4EDD")).Render(strings.Join(crumbs, " > "))
+	if wd != nil {
+		if m.depth >= DepthSpaces && m.cursorSpace < len(wd.Spaces) {
+			crumbs = append(crumbs, wd.Spaces[m.cursorSpace].Name)
+		}
+		if m.depth >= DepthFolders && len(wd.Spaces) > 0 {
+			sID := string(wd.Spaces[m.cursorSpace].ID)
+			folders := wd.FoldersBySpace[sID]
+			if m.cursorFolder < len(folders) {
+				crumbs = append(crumbs, folders[m.cursorFolder].Name)
+			} else {
+				idx := m.cursorFolder - len(folders)
+				lists := wd.ListsBySpace[sID]
+				if idx >= 0 && idx < len(lists) {
+					crumbs = append(crumbs, lists[idx].Name)
+				}
+			}
+		}
+		if m.depth >= DepthLists && len(wd.Spaces) > 0 {
+			sID := string(wd.Spaces[m.cursorSpace].ID)
+			folders := wd.FoldersBySpace[sID]
+			if m.cursorFolder < len(folders) {
+				fID := string(folders[m.cursorFolder].ID)
+				lists := wd.ListsByFolder[fID]
+				if m.cursorList < len(lists) {
+					crumbs = append(crumbs, lists[m.cursorList].Name)
+				}
+			}
+		}
+		if m.depth >= DepthTasks {
+			t := m.getHoveredTask()
+			if t != nil {
+				crumbs = append(crumbs, t.Name)
+			}
+		}
 	}
 
-	if m.depth >= DepthSpaces && m.cursorSpace < len(wd.Spaces) {
-		crumbs = append(crumbs, wd.Spaces[m.cursorSpace].Name)
+	crumbStr := strings.Join(crumbs, " > ")
+
+	if lipgloss.Width(crumbStr) > maxWidth {
+		runes := []rune(crumbStr)
+		crumbStr = "…" + string(runes[len(runes)-(maxWidth-1):])
 	}
-	if m.depth >= DepthFolders && len(wd.Spaces) > 0 {
-		sID := string(wd.Spaces[m.cursorSpace].ID)
-		folders := wd.FoldersBySpace[sID]
-		if m.cursorFolder < len(folders) {
-			crumbs = append(crumbs, folders[m.cursorFolder].Name)
-		} else {
-			idx := m.cursorFolder - len(folders)
-			lists := wd.ListsBySpace[sID]
-			if idx >= 0 && idx < len(lists) {
-				crumbs = append(crumbs, lists[idx].Name)
-			}
-		}
-	}
-	if m.depth >= DepthLists && len(wd.Spaces) > 0 {
-		sID := string(wd.Spaces[m.cursorSpace].ID)
-		folders := wd.FoldersBySpace[sID]
-		if m.cursorFolder < len(folders) {
-			fID := string(folders[m.cursorFolder].ID)
-			lists := wd.ListsByFolder[fID]
-			if m.cursorList < len(lists) {
-				crumbs = append(crumbs, lists[m.cursorList].Name)
-			}
-		}
-	}
-	if m.depth >= DepthTasks {
-		t := m.getHoveredTask()
-		if t != nil {
-			crumbs = append(crumbs, t.Name)
-		}
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("#9D4EDD")).Render(strings.Join(crumbs, " > "))
+
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#9D4EDD")).Render(crumbStr)
 }
 
-func renderPane(items []ListItem, title string, rawText string, cursor int, scrollOffset int, width int, height int, isActive bool) string {
-	innerW := width - 2
+func renderPane(items []ListItem, title string, rawText string, cursor int, scrollOffset int, totalWidth int, totalHeight int, isActive bool) string {
+	innerW := totalWidth - 2
 	if innerW < 5 {
 		innerW = 5
 	}
 
-	innerH := height - 2
+	innerH := totalHeight - 2
 	if innerH < 3 {
 		innerH = 3
 	}
 
 	paneStyle := lipgloss.NewStyle().
 		Width(innerW).
-		MaxWidth(innerW).
 		Height(innerH).
-		MaxHeight(innerH).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#5A189A"))
 
@@ -473,10 +477,11 @@ func renderPane(items []ListItem, title string, rawText string, cursor int, scro
 
 	titleRunes := []rune(title)
 	if len(titleRunes) > innerW {
-		title = string(titleRunes[:innerW-3]) + "..."
+		title = string(titleRunes[:innerW-1]) + "…"
 	}
 	uiLines = append(uiLines, titleStyle.Render(title))
-	uiLines = append(uiLines, "")
+	uiLines = append(uiLines, "") // Spacer line
+
 	if rawText != "" {
 		lines := strings.Split(rawText, "\n")
 		maxLines := innerH - 2
@@ -503,7 +508,7 @@ func renderPane(items []ListItem, title string, rawText string, cursor int, scro
 
 				runes := []rune(line)
 				if len(runes) > innerW {
-					uiLines = append(uiLines, string(runes[:innerW-3])+"...")
+					uiLines = append(uiLines, string(runes[:innerW-1])+"…")
 				} else {
 					uiLines = append(uiLines, line)
 				}
@@ -543,7 +548,7 @@ func renderPane(items []ListItem, title string, rawText string, cursor int, scro
 
 			runes := []rune(nameStr)
 			if len(runes) > maxNameW {
-				nameStr = string(runes[:maxNameW-3]) + "..."
+				nameStr = string(runes[:maxNameW-1]) + "…"
 			}
 
 			uiLines = append(uiLines, prefix+style.Render(nameStr))

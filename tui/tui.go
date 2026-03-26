@@ -359,74 +359,101 @@ func (m dashboardModel) View() string {
 		return fmt.Sprintf("Error: %v\nPress 'q' to quit.", m.err)
 	}
 
-	// safe width calculation for text elements to prevent horizontal wrap-around (in JSON payloads)
-	safeTextWidth := m.width - 4
+	safeTextWidth := m.width - 6
+	if safeTextWidth < 20 {
+		safeTextWidth = 20
+	}
 
-	// header
+	// 2. HEADER
 	var header string
 	if m.state != stateInit {
+		headerInnerWidth := safeTextWidth - 2
+
+		leftSide := fmt.Sprintf("%s | %s - %s", m.user.ID, m.user.Initials, m.user.Email)
+		rightSide := fmt.Sprintf("[%s]", m.user.Timezone)
+
+		leftW := lipgloss.Width(leftSide)
+		rightW := lipgloss.Width(rightSide)
+
+		var headerContent string
+		if leftW+rightW >= headerInnerWidth {
+			availLeft := headerInnerWidth - rightW - 1
+			if availLeft > 3 {
+				runes := []rune(leftSide)
+				leftSide = string(runes[:availLeft-1]) + "…"
+			} else {
+				leftSide = ""
+			}
+			headerContent = leftSide + " " + rightSide
+		} else {
+			spaceCount := headerInnerWidth - leftW - rightW
+			headerContent = leftSide + strings.Repeat(" ", spaceCount) + rightSide
+		}
+
 		headerStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E0AAFF")).
 			Padding(0, 1).
 			MarginBottom(1).
-			Italic(true).
-			Width(safeTextWidth).
-			MaxWidth(safeTextWidth)
+			Italic(true)
 
-		leftSide := fmt.Sprintf("%s | %s - %s", m.user.ID, m.user.Initials, m.user.Email)
-		rightSide := fmt.Sprintf("[ %s ]", m.user.Timezone)
-
-		spaceCount := m.width - lipgloss.Width(leftSide) - lipgloss.Width(rightSide) - 6
-
-		var headerContent string
-		if spaceCount > 0 {
-			spacer := strings.Repeat(" ", spaceCount)
-			headerContent = leftSide + spacer + rightSide
-		} else {
-			headerContent = leftSide + " " + rightSide
-		}
 		header = headerStyle.Render(headerContent)
 	}
 
-	// footer
+	logInnerWidth := safeTextWidth - 4
+	if logInnerWidth < 10 {
+		logInnerWidth = 10
+	}
+
 	logBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("240")).
-		Width(m.width-8).
-		Height(5).
+		Width(logInnerWidth).
+		Height(4).
 		Padding(0, 1)
 
 	logTitle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("--- Live API Event Log ---")
 
 	displayLogs := m.logs
-	if len(displayLogs) > 4 {
-		displayLogs = displayLogs[len(displayLogs)-4:]
+	if len(displayLogs) > 3 {
+		displayLogs = displayLogs[len(displayLogs)-3:]
 	}
-	logContent := strings.Join(displayLogs, "\n")
+
+	var safeLogs []string
+	for _, l := range displayLogs {
+		runes := []rune(l)
+		if len(runes) > logInnerWidth {
+			safeLogs = append(safeLogs, string(runes[:logInnerWidth-3])+"...")
+		} else {
+			safeLogs = append(safeLogs, l)
+		}
+	}
+	logContent := strings.Join(safeLogs, "\n")
 	bottomPane := logBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, logTitle, logContent))
 
-	helpTextStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		MarginBottom(1).
-		Width(safeTextWidth).
-		MaxWidth(safeTextWidth)
-
-	helpText := helpTextStyle.Render("Navigate: h j k l | Back: esc | Enter/Space: select | o: open in browser | q: quit")
+	helpStr := "Navigate: h j k l | Back: esc | Enter/Space: select | o: open in browser | q: quit"
+	if lipgloss.Width(helpStr) > safeTextWidth {
+		helpStr = "Nav: hjkl | esc: back | enter: select | o: open | q: quit"
+		if lipgloss.Width(helpStr) > safeTextWidth {
+			runes := []rune(helpStr)
+			helpStr = string(runes[:safeTextWidth-1]) + "…"
+		}
+	}
+	helpText := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MarginBottom(1).Render(helpStr)
 
 	var footer string
 	if (m.state == stateLoaded || m.state == stateIdle) && m.activeTeamID != "" {
 		if wd, ok := m.workspaceCache[m.activeTeamID]; ok {
-			perfStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#E0AAFF")).
-				Padding(0, 1).
-				MarginTop(1).
-				Italic(true).
-				Width(safeTextWidth).
-				MaxWidth(safeTextWidth)
-
 			perfText := fmt.Sprintf("Last fetch completed in %s | Tasks Per Second: %s | Est. RPM: %s",
 				wd.Performance.Duration, wd.Performance.TPS, wd.Performance.RPM)
-			footer = perfStyle.Render(perfText)
+			if lipgloss.Width(perfText) > safeTextWidth {
+				runes := []rune(perfText)
+				perfText = string(runes[:safeTextWidth-1]) + "…"
+			}
+			footer = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#E0AAFF")).
+				MarginTop(1).
+				Italic(true).
+				Render(perfText)
 		}
 	}
 
@@ -451,24 +478,29 @@ func (m dashboardModel) View() string {
 	statLists := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Lists"), statValueStyle.Render(lCount)))
 	statTasks := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Tasks"), statValueStyle.Render(tCount)))
 
-	statsRowStyle := lipgloss.NewStyle().MarginBottom(1)
-	statsRow := statsRowStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, statSpaces, statFolders, statLists, statTasks))
+	statsRow := lipgloss.NewStyle().MarginBottom(1).Render(
+		lipgloss.JoinHorizontal(lipgloss.Top, statSpaces, statFolders, statLists, statTasks),
+	)
 
-	breadcrumbsStyle := lipgloss.NewStyle().MarginBottom(1).Width(safeTextWidth).MaxWidth(safeTextWidth)
-	breadcrumbs := breadcrumbsStyle.Render(m.getBreadcrumbs())
+	breadcrumbs := lipgloss.NewStyle().MarginBottom(1).Render(m.getBreadcrumbs(safeTextWidth))
 
 	topStack := lipgloss.JoinVertical(lipgloss.Left, header, statsRow, breadcrumbs)
 
 	occupiedHeight := lipgloss.Height(topStack) + lipgloss.Height(bottomStack)
 
-	paneHeight := m.height - occupiedHeight - 2
+	paneHeight := m.height - occupiedHeight - 1
 	if paneHeight < 5 {
 		paneHeight = 5
 	}
 
-	paneWidth := (m.width - 4) / 2
-	if paneWidth < 10 {
-		paneWidth = 10
+	paneWidthLeft := safeTextWidth / 2
+	paneWidthRight := safeTextWidth - paneWidthLeft
+
+	if paneWidthLeft < 10 {
+		paneWidthLeft = 10
+	}
+	if paneWidthRight < 10 {
+		paneWidthRight = 10
 	}
 
 	leftItems, leftTitle, leftCursor := m.getLeftPane()
@@ -477,8 +509,8 @@ func (m dashboardModel) View() string {
 	leftActive := (m.depth != DepthTaskDetails)
 	rightActive := (m.depth == DepthTaskDetails)
 
-	leftPane := renderPane(leftItems, leftTitle, "", leftCursor, 0, paneWidth, paneHeight, leftActive)
-	rightPane := renderPane(rightItems, rightTitle, rightRawText, -1, m.taskScrollOffset, paneWidth, paneHeight, rightActive)
+	leftPane := renderPane(leftItems, leftTitle, "", leftCursor, 0, paneWidthLeft, paneHeight, leftActive)
+	rightPane := renderPane(rightItems, rightTitle, rightRawText, -1, m.taskScrollOffset, paneWidthRight, paneHeight, rightActive)
 
 	splitPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
