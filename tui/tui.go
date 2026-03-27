@@ -53,6 +53,13 @@ const (
 	DepthTaskDetails
 )
 
+const (
+	SyncOff SyncInterval = iota
+	Sync5Min
+	Sync15Min
+	Sync30Min
+)
+
 // model
 type dashboardModel struct {
 	apiClient *clkup.APIClient
@@ -81,12 +88,14 @@ type dashboardModel struct {
 	cursorTask       int
 	taskScrollOffset int
 
-	showJSON bool
+	showJSON   bool
+	focusRight bool
 
 	// Data Store
-	user       clkup.User
-	workspaces []clkup.Workspace
-	teamPerf   map[string]clkup.Performance
+	user         clkup.User
+	workspaces   []clkup.Workspace
+	teamPerf     map[string]clkup.Performance
+	syncInterval SyncInterval
 }
 
 func InitialModel(client *clkup.APIClient, db *dbstore.DB) dashboardModel {
@@ -97,14 +106,16 @@ func InitialModel(client *clkup.APIClient, db *dbstore.DB) dashboardModel {
 	client.LogChan = logChan
 
 	return dashboardModel{
-		apiClient: client,
-		db:        db,
-		spinner:   s,
-		state:     stateInit,
-		status:    "Fetching User and Workspace data...",
-		logChan:   logChan,
-		teamPerf:  make(map[string]clkup.Performance),
-		showJSON:  false,
+		apiClient:    client,
+		db:           db,
+		spinner:      s,
+		state:        stateInit,
+		status:       "Fetching User and Workspace data...",
+		logChan:      logChan,
+		teamPerf:     make(map[string]clkup.Performance),
+		showJSON:     false,
+		focusRight:   false,
+		syncInterval: SyncOff,
 	}
 }
 
@@ -158,8 +169,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "tab":
+			// Toggle focus between left and right panes
+			m.focusRight = !m.focusRight
+			return m, nil
+
 		case "j", "down":
-			if m.depth == DepthTaskDetails {
+			if m.depth == DepthTaskDetails || m.focusRight {
 				m.taskScrollOffset++
 				return m, nil
 			}
@@ -196,13 +212,30 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			m.taskScrollOffset = 0
+
 		case "J": // Shift + j
 			m.showJSON = !m.showJSON
 			m.taskScrollOffset = 0
+			if !m.showJSON {
+				m.focusRight = false
+			}
+			return m, nil
+
+		case "pgdown", "ctrl+d":
+			m.taskScrollOffset += 10
+			return m, nil
+
+		case "pgup", "ctrl+u":
+			if m.taskScrollOffset > 10 {
+				m.taskScrollOffset -= 10
+			} else {
+				m.taskScrollOffset = 0
+			}
 			return m, nil
 
 		case "k", "up":
-			if m.depth == DepthTaskDetails {
+			if m.depth == DepthTaskDetails || m.focusRight {
 				if m.taskScrollOffset > 0 {
 					m.taskScrollOffset--
 				}
@@ -236,8 +269,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			m.taskScrollOffset = 0
+
 		case "l", "right", "enter", " ":
-			if m.depth == DepthTaskDetails {
+			if m.depth == DepthTaskDetails || m.focusRight {
 				return m, nil
 			}
 			if m.depth == DepthTasks {
@@ -289,6 +324,12 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "h", "left", "esc", "backspace":
+
+			if m.focusRight {
+				m.focusRight = false
+				return m, nil
+			}
+
 			switch m.depth {
 			case DepthSpaces:
 				m.depth = DepthWorkspaces
@@ -328,6 +369,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Force syncing workspace data from ClickUp..."
 				return m, tea.Batch(m.spinner.Tick, fetchPlanCmd(m.apiClient, m.activeTeamID))
 			}
+		case "F": // Shift + f
+			switch m.syncInterval {
+			case SyncOff:
+				m.syncInterval = Sync5Min
+			case Sync5Min:
+				m.syncInterval = Sync15Min
+			case Sync15Min:
+				m.syncInterval = Sync30Min
+			case Sync30Min:
+				m.syncInterval = SyncOff
+			}
+
+			// If we just turned it on, kick off the timer immediately
+			if m.syncInterval != SyncOff {
+				return m, tickAutoSync(m.syncInterval.Duration())
+			}
+			return m, nil
 		}
 
 	case spinner.TickMsg:
@@ -367,14 +425,26 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForLog(m.logChan)
 
 	case FanOutCompleteMsg:
-		// Save just the performance stats instead of the whole data tree
 		if m.teamPerf == nil {
 			m.teamPerf = make(map[string]clkup.Performance)
 		}
 		m.teamPerf[msg.TeamID] = msg.Performance
-		m.state = stateLoaded
-		m.depth = DepthWorkspaces
+
+		if m.state == stateFetchingData || m.state == stateFetchingPlan {
+			m.state = stateLoaded
+			m.depth = DepthWorkspaces
+		}
 		return m, nil
+
+	case autoSyncTickMsg:
+		if m.syncInterval == SyncOff || m.activeTeamID == "" {
+			return m, nil
+		}
+
+		return m, tea.Batch(
+			tickAutoSync(m.syncInterval.Duration()),
+			fetchHierarchyCmd(m.apiClient, m.db, m.activeTeamID),
+		)
 
 	case ErrMsg:
 		m.err = msg.err
@@ -402,25 +472,40 @@ func (m dashboardModel) View() string {
 		headerInnerWidth := safeTextWidth - 2
 
 		leftSide := fmt.Sprintf("%s | %s - %s", m.user.ID, m.user.Initials, m.user.Email)
-		rightSide := fmt.Sprintf("[%s]", m.user.Timezone)
+		rightTop := fmt.Sprintf("[%s]", m.user.Timezone)
+
+		syncColor := "#5A189A"
+		if m.syncInterval != SyncOff {
+			syncColor = "#00FF00"
+		}
+		rightBot := lipgloss.NewStyle().Foreground(lipgloss.Color(syncColor)).Render(m.syncInterval.String())
 
 		leftW := lipgloss.Width(leftSide)
-		rightW := lipgloss.Width(rightSide)
+		rightTopW := lipgloss.Width(rightTop)
 
-		var headerContent string
-		if leftW+rightW >= headerInnerWidth {
-			availLeft := headerInnerWidth - rightW - 1
+		if leftW+rightTopW >= headerInnerWidth {
+			availLeft := headerInnerWidth - rightTopW - 1
 			if availLeft > 3 {
 				runes := []rune(leftSide)
 				leftSide = string(runes[:availLeft-1]) + "…"
 			} else {
 				leftSide = ""
 			}
-			headerContent = leftSide + " " + rightSide
-		} else {
-			spaceCount := headerInnerWidth - leftW - rightW
-			headerContent = leftSide + strings.Repeat(" ", spaceCount) + rightSide
 		}
+
+		leftW = lipgloss.Width(leftSide)
+		spaceCountTop := headerInnerWidth - leftW - rightTopW
+		if spaceCountTop < 0 {
+			spaceCountTop = 0
+		}
+		line1 := leftSide + strings.Repeat(" ", spaceCountTop) + rightTop
+
+		rightBotW := lipgloss.Width(rightBot)
+		spaceCountBot := headerInnerWidth - rightBotW
+		if spaceCountBot < 0 {
+			spaceCountBot = 0
+		}
+		line2 := strings.Repeat(" ", spaceCountBot) + rightBot
 
 		headerStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E0AAFF")).
@@ -428,6 +513,7 @@ func (m dashboardModel) View() string {
 			MarginBottom(1).
 			Italic(true)
 
+		headerContent := line1 + "\n" + line2
 		header = headerStyle.Render(headerContent)
 	}
 
@@ -462,12 +548,21 @@ func (m dashboardModel) View() string {
 	logContent := strings.Join(safeLogs, "\n")
 	bottomPane := logBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, logTitle, logContent))
 
-	helpStr := "Navigate: h j k l | Back: esc | Enter/Space: select | o: open in browser | q: quit"
+	helpStr := "Nav: h j k l | Back: esc | Select: enter | JSON: Shift+J | Focus: tab | Sync: r | Cycle Auto-Sync: SHIFT+F | Open: o | Quit: q"
+
 	if lipgloss.Width(helpStr) > safeTextWidth {
-		helpStr = "Nav: hjkl | esc: back | enter: select | o: open | q: quit"
+		// Medium width fallback
+		helpStr = "Nav: hjkl | esc: back | enter: sel | J: json | tab: focus | r: sync | F: auto-sync | o: open | q: quit"
+
 		if lipgloss.Width(helpStr) > safeTextWidth {
-			runes := []rune(helpStr)
-			helpStr = string(runes[:safeTextWidth-1]) + "…"
+			// Small width fallback
+			helpStr = "hjkl:nav | esc:back | enter:sel | J:json | tab:focus | r:sync | F:auto-sync | o:web | q:quit"
+
+			if lipgloss.Width(helpStr) > safeTextWidth {
+				// Extreme squish fallback
+				runes := []rune(helpStr)
+				helpStr = string(runes[:safeTextWidth-1]) + "…"
+			}
 		}
 	}
 	helpText := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MarginBottom(1).Render(helpStr)
@@ -538,9 +633,8 @@ func (m dashboardModel) View() string {
 	leftItems, leftTitle, leftCursor := m.getLeftPane()
 	rightItems, rightTitle, rightRawText := m.getRightPane()
 
-	leftActive := (m.depth != DepthTaskDetails)
-	rightActive := (m.depth == DepthTaskDetails)
-
+	leftActive := !m.focusRight && (m.depth != DepthTaskDetails)
+	rightActive := m.focusRight || (m.depth == DepthTaskDetails)
 	leftPane := renderPane(leftItems, leftTitle, "", leftCursor, 0, paneWidthLeft, paneHeight, leftActive)
 	rightPane := renderPane(rightItems, rightTitle, rightRawText, -1, m.taskScrollOffset, paneWidthRight, paneHeight, rightActive)
 

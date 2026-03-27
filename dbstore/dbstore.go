@@ -55,6 +55,11 @@ func InitDB(filepath string) (*DB, error) {
 		status TEXT NOT NULL,
 		raw_data TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS custom_fields (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		raw_data TEXT NOT NULL
+	);
 
 	-- Indexes for lightning-fast TUI navigation
 	CREATE INDEX IF NOT EXISTS idx_spaces_team ON spaces(team_id);
@@ -277,4 +282,42 @@ func (db *DB) GetTasksByList(listID string) []clkup.Task {
 		res = append(res, item)
 	}
 	return res
+}
+
+func (db *DB) SyncCustomFields(fields []clkup.CustomField) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO custom_fields (id, name, raw_data) 
+		VALUES (?, ?, ?) 
+		ON CONFLICT(id) DO UPDATE SET 
+			name=excluded.name, 
+			raw_data=excluded.raw_data;
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, cf := range fields {
+		b, _ := json.Marshal(cf)
+		stmt.Exec(string(cf.Id), cf.Name, string(b))
+	}
+
+	return tx.Commit()
+}
+
+func (db *DB) GetMasterCustomField(id string) *clkup.CustomField {
+	var raw string
+	err := db.QueryRow(`SELECT raw_data FROM custom_fields WHERE id = ?`, id).Scan(&raw)
+	if err != nil {
+		return nil
+	}
+	var cf clkup.CustomField
+	json.Unmarshal([]byte(raw), &cf)
+	return &cf
 }

@@ -1,10 +1,15 @@
 package tui
 
-import "super-duper-fortnight/clkup"
+import (
+	"super-duper-fortnight/clkup"
+	"time"
+)
 
 type uiState int
 type ViewDepth int
 type LogMsg string
+type SyncInterval int
+type autoSyncTickMsg time.Time
 
 type InitDataMsg struct {
 	User       clkup.User

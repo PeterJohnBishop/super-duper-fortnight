@@ -107,6 +107,112 @@ func (c *APIClient) GetAuthorizedUser() (User, error) {
 	return userResponse.User, nil
 }
 
+// GetWorkspaceCustomFields retrieves all custom fields accessible at the Workspace (Team) level
+func (c *APIClient) GetWorkspaceCustomFields(team_id string) ([]CustomField, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/field", team_id)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	}
+
+	var cfResp cfResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON: %w", err)
+	}
+
+	return cfResp.Fields, nil
+}
+
+// GetSpaceCustomFields retrieves all custom fields accessible at the Space level
+func (c *APIClient) GetSpaceCustomFields(space_id string) ([]CustomField, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/field", space_id)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	}
+
+	var cfResp cfResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON: %w", err)
+	}
+
+	return cfResp.Fields, nil
+}
+
+func (c *APIClient) GetFolderCustomFields(folder_id string) ([]CustomField, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/folder/%s/field", folder_id)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	}
+
+	var cfResp cfResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON: %w", err)
+	}
+
+	return cfResp.Fields, nil
+}
+
+func (c *APIClient) GetListCustomFields(list_id string) ([]CustomField, error) {
+	url := fmt.Sprintf("https://api.clickup.com/api/v2/list/%s/field", list_id)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	}
+
+	var cfResponse cfResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON: %w", err)
+	}
+
+	return cfResponse.Fields, nil
+}
+
 func (c *APIClient) GetPlan(teamID string) (PlanResponse, error) {
 	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/plan", teamID)
 

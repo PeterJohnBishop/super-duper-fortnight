@@ -59,6 +59,10 @@ type TasksResponse struct {
 	Task []Task `json:"tasks"`
 }
 
+type cfResponse struct {
+	Fields []CustomField `json:"fields"`
+}
+
 // hierarchy types
 
 type Workspace struct {
@@ -272,6 +276,19 @@ type CustomField struct {
 	DateCreated    string     `json:"date_created"`
 	HideFromGuests bool       `json:"hide_from_guests"`
 	Id             FlexID     `json:"id"`
+	Value          any        `json:"value"`
+}
+
+type TypeConfig struct {
+	Options []CustomFieldOption `json:"options"`
+}
+
+type CustomFieldOption struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`  // Used by drop_down
+	Label      string `json:"label"` // Used by labels
+	Color      string `json:"color"`
+	OrderIndex any    `json:"orderindex"` // Can be int or string from ClickUp
 }
 
 type Project struct {
@@ -295,8 +312,6 @@ type FolderLocation struct {
 	Hidden bool   `json:"hidden"`
 	Id     FlexID `json:"id"`
 }
-
-type TypeConfig struct{}
 
 type Performance struct {
 	Duration string

@@ -84,6 +84,7 @@ func fetchHierarchyCmd(client *clkup.APIClient, db *dbstore.DB, teamID string) t
 		var finalTasks []clkup.Task
 		var finalFolders []clkup.Folder
 		var finalLists []clkup.List
+		var finalCustomFields []clkup.CustomField // <-- New slice for Custom Fields
 
 		g.Go(func() error {
 			tasks, err := client.GetAllTasks(teamID)
@@ -93,6 +94,16 @@ func fetchHierarchyCmd(client *clkup.APIClient, db *dbstore.DB, teamID string) t
 				mu.Unlock()
 			}
 			return err
+		})
+
+		g.Go(func() error {
+			fields, err := client.GetWorkspaceCustomFields(teamID)
+			if err == nil {
+				mu.Lock()
+				finalCustomFields = append(finalCustomFields, fields...)
+				mu.Unlock()
+			}
+			return nil
 		})
 
 		g.Go(func() error {
@@ -109,6 +120,16 @@ func fetchHierarchyCmd(client *clkup.APIClient, db *dbstore.DB, teamID string) t
 				sID := string(space.ID)
 
 				g.Go(func() error {
+					fields, err := client.GetSpaceCustomFields(sID)
+					if err == nil {
+						mu.Lock()
+						finalCustomFields = append(finalCustomFields, fields...)
+						mu.Unlock()
+					}
+					return nil
+				})
+
+				g.Go(func() error {
 					folders, err := client.GetFolders(sID)
 					if err != nil {
 						return err
@@ -120,6 +141,17 @@ func fetchHierarchyCmd(client *clkup.APIClient, db *dbstore.DB, teamID string) t
 
 					for _, folder := range folders {
 						fID := string(folder.ID)
+
+						g.Go(func() error {
+							fields, err := client.GetFolderCustomFields(fID)
+							if err == nil {
+								mu.Lock()
+								finalCustomFields = append(finalCustomFields, fields...)
+								mu.Unlock()
+							}
+							return nil
+						})
+
 						g.Go(func() error {
 							lists, err := client.GetLists(fID)
 							if err != nil {
@@ -129,6 +161,20 @@ func fetchHierarchyCmd(client *clkup.APIClient, db *dbstore.DB, teamID string) t
 							mu.Lock()
 							finalLists = append(finalLists, lists...)
 							mu.Unlock()
+
+							for _, list := range lists {
+								lID := string(list.ID)
+								g.Go(func() error {
+									fields, err := client.GetListCustomFields(lID)
+									if err == nil {
+										mu.Lock()
+										finalCustomFields = append(finalCustomFields, fields...)
+										mu.Unlock()
+									}
+									return nil
+								})
+							}
+
 							return nil
 						})
 					}
@@ -144,29 +190,54 @@ func fetchHierarchyCmd(client *clkup.APIClient, db *dbstore.DB, teamID string) t
 					mu.Lock()
 					finalLists = append(finalLists, folderlessLists...)
 					mu.Unlock()
+
+					for _, list := range folderlessLists {
+						lID := string(list.ID)
+						g.Go(func() error {
+							fields, err := client.GetListCustomFields(lID)
+							if err == nil {
+								mu.Lock()
+								finalCustomFields = append(finalCustomFields, fields...)
+								mu.Unlock()
+							}
+							return nil
+						})
+					}
+
 					return nil
 				})
 			}
 			return nil
 		})
 
-		// Wait for all API calls to finish
 		if err := g.Wait(); err != nil {
 			return ErrMsg{err}
 		}
-		// save in SQLite
+
 		err := db.SyncWorkspaceData(teamID, finalSpaces, finalFolders, finalLists, finalTasks)
 		if err != nil {
 			return ErrMsg{fmt.Errorf("database sync failed: %w", err)}
 		}
-		// ------------------------------
+
+		err = db.SyncCustomFields(finalCustomFields)
+		if err != nil {
+			fmt.Printf("Warning: Custom Field sync failed: %v\n", err)
+		}
 
 		perf := clkup.CalculatePerformance(len(finalTasks), start)
 
-		// Return a beautifully lightweight message
 		return FanOutCompleteMsg{
 			TeamID:      teamID,
 			Performance: perf,
 		}
 	}
+}
+
+func tickAutoSync(d time.Duration) tea.Cmd {
+	if d == 0 {
+		return nil
+	}
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return autoSyncTickMsg(t)
+	})
 }

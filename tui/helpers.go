@@ -155,6 +155,26 @@ func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
 				sb.WriteString(fmt.Sprintf("Due:     %s\n", formatClickUpDate(t.DueDate, tz)))
 			}
 
+			// Custom Fields Column Formatting
+			if len(t.CustomFields) > 0 {
+				sb.WriteString("\n--- Custom Fields ---\n")
+
+				// 1. Find the longest field name to calculate padding
+				var maxNameLen int
+				for _, cf := range t.CustomFields {
+					if len(cf.Name) > maxNameLen {
+						maxNameLen = len(cf.Name)
+					}
+				}
+
+				// 2. Print Key: Value pairs with perfect alignment
+				for _, cf := range t.CustomFields {
+					valStr := formatCustomFieldValue(cf, tz)
+					// The %-*s format syntax dynamically pads strings with spaces based on maxNameLen
+					sb.WriteString(fmt.Sprintf("%-*s : %s\n", maxNameLen, cf.Name, valStr))
+				}
+			}
+
 			// Description
 			sb.WriteString("\n--- Description ---\n")
 			if t.Description == "" {
@@ -618,4 +638,196 @@ func (m dashboardModel) getHoveredRawJSON() string {
 	}
 
 	return "No data available."
+}
+
+func formatCustomFieldValue(cf clkup.CustomField, tz string) string {
+	if cf.Value == nil {
+		return "-"
+	}
+
+	switch cf.Type {
+	case "date":
+		return formatClickUpDate(cf.Value, tz)
+
+	case "users":
+		if userList, ok := cf.Value.([]interface{}); ok {
+			var people []string
+			for _, u := range userList {
+				if userMap, ok := u.(map[string]interface{}); ok {
+					people = append(people, formatClickUpUser(userMap))
+				}
+			}
+			if len(people) > 0 {
+				return strings.Join(people, ", ")
+			}
+		}
+
+		if userMap, ok := cf.Value.(map[string]interface{}); ok {
+			return formatClickUpUser(userMap)
+		}
+
+	case "drop_down":
+		if idx, ok := cf.Value.(float64); ok {
+			i := int(idx)
+			if i >= 0 && i < len(cf.TypeConfig.Options) {
+				if cf.TypeConfig.Options[i].Name != "" {
+					return cf.TypeConfig.Options[i].Name
+				}
+				return cf.TypeConfig.Options[i].Label // Fallback just in case
+			}
+		}
+
+		valStr := fmt.Sprintf("%v", cf.Value)
+		if i, err := strconv.Atoi(valStr); err == nil && i >= 0 && i < len(cf.TypeConfig.Options) {
+			if cf.TypeConfig.Options[i].Name != "" {
+				return cf.TypeConfig.Options[i].Name
+			}
+			return cf.TypeConfig.Options[i].Label
+		}
+
+		for _, opt := range cf.TypeConfig.Options {
+			if opt.ID == valStr || fmt.Sprintf("%v", opt.OrderIndex) == valStr {
+				if opt.Name != "" {
+					return opt.Name
+				}
+				return opt.Label
+			}
+		}
+
+	case "labels":
+		if ids, ok := cf.Value.([]interface{}); ok {
+			var matchedLabels []string
+			for _, rawID := range ids {
+				idStr := fmt.Sprintf("%v", rawID)
+
+				for _, opt := range cf.TypeConfig.Options {
+					if opt.ID == idStr {
+						display := opt.Label
+						if display == "" {
+							display = opt.Name
+						}
+						matchedLabels = append(matchedLabels, display)
+						break
+					}
+				}
+			}
+			if len(matchedLabels) > 0 {
+				return strings.Join(matchedLabels, ", ")
+			}
+		}
+
+	case "checkbox":
+		if b, ok := cf.Value.(bool); ok {
+			if b {
+				return "Yes"
+			}
+			return "No"
+		}
+
+	case "location":
+		if m, ok := cf.Value.(map[string]interface{}); ok {
+			if addr, ok := m["formatted_address"].(string); ok {
+				return addr
+			}
+		}
+
+	case "manual_progress":
+		if m, ok := cf.Value.(map[string]interface{}); ok {
+			if curr, ok := m["current"].(float64); ok {
+				return fmt.Sprintf("%.0f%%", curr)
+			}
+		}
+	}
+
+	switch v := cf.Value.(type) {
+	case string:
+		if v == "" {
+			return "-"
+		}
+		return v
+	case float64:
+		return fmt.Sprintf("%v", v)
+	case bool:
+		if v {
+			return "Yes"
+		}
+		return "No"
+	case []interface{}:
+		var strs []string
+		for _, item := range v {
+			strs = append(strs, fmt.Sprintf("%v", item))
+		}
+		if len(strs) == 0 {
+			return "-"
+		}
+		return strings.Join(strs, ", ")
+	case map[string]interface{}:
+		b, err := json.Marshal(v)
+		if err == nil {
+			return string(b)
+		}
+	}
+
+	return fmt.Sprintf("%v", cf.Value)
+}
+
+func formatClickUpUser(m map[string]interface{}) string {
+	var username, email, idStr string
+
+	if u, ok := m["username"].(string); ok {
+		username = u
+	}
+	if e, ok := m["email"].(string); ok {
+		email = e
+	}
+
+	// extract the ID and force it out of scientific notation
+	if idFloat, ok := m["id"].(float64); ok {
+		idStr = fmt.Sprintf("%.0f", idFloat)
+	} else if idString, ok := m["id"].(string); ok {
+		idStr = idString
+	}
+
+	// example: "Peter Bishop (54098740) pbishop@clickup.com"
+	var parts []string
+	if username != "" {
+		parts = append(parts, username)
+	}
+	if idStr != "" {
+		parts = append(parts, fmt.Sprintf("(%s)", idStr))
+	}
+	if email != "" {
+		parts = append(parts, email)
+	}
+
+	if len(parts) == 0 {
+		return "Unknown User"
+	}
+	return strings.Join(parts, " ")
+}
+
+func (s SyncInterval) String() string {
+	switch s {
+	case Sync5Min:
+		return "Auto-Sync: 5m"
+	case Sync15Min:
+		return "Auto-Sync: 15m"
+	case Sync30Min:
+		return "Auto-Sync: 30m"
+	default:
+		return "Auto-Sync: Off"
+	}
+}
+
+func (s SyncInterval) Duration() time.Duration {
+	switch s {
+	case Sync5Min:
+		return 5 * time.Minute
+	case Sync15Min:
+		return 15 * time.Minute
+	case Sync30Min:
+		return 30 * time.Minute
+	default:
+		return 0
+	}
 }
