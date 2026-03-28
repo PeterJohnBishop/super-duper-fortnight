@@ -56,7 +56,7 @@ brews:
   - name: goclickup
     repository:
       owner: PeterJohnBishop
-      name: homebrew-tap
+      name: goclickup
     directory: Formula
     homepage: "https://github.com/PeterJohnBishop/GoCLIckUp"
     description: "A blazing fast terminal UI for ClickUp."
