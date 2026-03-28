@@ -11,7 +11,7 @@ class Goclicu < Formula
   on_macos do
     if Hardware::CPU.intel?
       url "https://github.com/PeterJohnBishop/goclicu/releases/download/v1.0.5/goclicu_Darwin_x86_64.tar.gz"
-      sha256 "7c9ad829070831c7564eec85b18121acc0ed20b8dcfa60348d65dd36c76243ee"
+      sha256 "59a4fd64102fa46cacc44aaaf85d40c67527a7be7f247c06edd06824f35addbc"
 
       define_method(:install) do
         bin.install "goclicu"
@@ -19,7 +19,7 @@ class Goclicu < Formula
     end
     if Hardware::CPU.arm?
       url "https://github.com/PeterJohnBishop/goclicu/releases/download/v1.0.5/goclicu_Darwin_arm64.tar.gz"
-      sha256 "29ff6b544534129379004132566ea0accbc4f11543a58c2b5ea9661568018699"
+      sha256 "c9058642f60945d8af06324ba9bd09338548d8d4071be6230615a7ed07078838"
 
       define_method(:install) do
         bin.install "goclicu"
@@ -30,14 +30,14 @@ class Goclicu < Formula
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
       url "https://github.com/PeterJohnBishop/goclicu/releases/download/v1.0.5/goclicu_Linux_x86_64.tar.gz"
-      sha256 "cf23ce9943884c97da87606a42ca57567751a818b301462cc4a2af607e51c1fb"
+      sha256 "24c58feb8636cb6cd5a6393ac1b3ce8e27756ae6b37f5ae023e673fe0d79cb55"
       define_method(:install) do
         bin.install "goclicu"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       url "https://github.com/PeterJohnBishop/goclicu/releases/download/v1.0.5/goclicu_Linux_arm64.tar.gz"
-      sha256 "5f6a102d49909bd3ec0d06abb4d9626d073e8106301d98232fc7ed7e39eef0fe"
+      sha256 "057100c46874283444763ce8146d9e50ba54f31bdfcdee2bb4916209fb88bee0"
       define_method(:install) do
         bin.install "goclicu"
       end
