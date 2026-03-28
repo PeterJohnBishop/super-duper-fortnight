@@ -1,4 +1,4 @@
-# CLI_ckUp
+# GoCLIckUp
 
 - On launch OAuth authentication is requried to generate a ClickUp API token, and define the Workspaces the Dashbord will have access to. The token is saved to the SQLite database for local retrieval.
 
