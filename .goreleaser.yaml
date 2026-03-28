@@ -18,6 +18,14 @@ before:
 builds:
   - env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X clkup.ClientID={{ .Env.CLIENT_ID }}
+      - -X clkup.ClientSecret={{ .Env.CLIENT_SECRET }}
+      - -X clkup.RedirectURI={{ .Env.REDIRECT_URI }}
+      - -X oauth.ClientID={{ .Env.CLIENT_ID }}
+      - -X oauth.ClientSecret={{ .Env.CLIENT_SECRET }}
+      - -X oauth.RedirectURI={{ .Env.REDIRECT_URI }}
     goos:
       - linux
       - windows

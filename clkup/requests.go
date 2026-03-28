@@ -32,15 +32,25 @@ func CalculatePerformance(totalTasks int, start time.Time) Performance {
 
 // OAUTH
 
+var (
+	ClientID     string
+	ClientSecret string
+	RedirectURI  string
+)
+
 func GetAccessToken(code string) (string, error) {
-	client_id := os.Getenv("CLIENT_ID")
-	client_secret := os.Getenv("CLIENT_SECRET")
+	if ClientID == "" {
+		ClientID = os.Getenv("CLIENT_ID")
+	}
+	if ClientSecret == "" {
+		ClientSecret = os.Getenv("CLIENT_SECRET")
+	}
 
 	url := "https://api.clickup.com/api/v2/oauth/token"
 
 	reqData := map[string]string{
-		"client_id":     client_id,
-		"client_secret": client_secret,
+		"client_id":     ClientID,
+		"client_secret": ClientSecret,
 		"code":          code,
 	}
 

@@ -7,6 +7,12 @@ import (
 	"runtime"
 )
 
+var (
+	ClientID     string
+	ClientSecret string
+	RedirectURI  string
+)
+
 func OpenBrowser(url string) error {
 	var cmd string
 	var args []string
@@ -28,8 +34,12 @@ func OpenBrowser(url string) error {
 }
 
 func Authenticate() {
-	client_id := os.Getenv("CLIENT_ID")
-	redirect_uri := os.Getenv("REDIRECT_URI")
-	url := fmt.Sprintf("https://app.clickup.com/api?client_id=%s&redirect_uri=%s", client_id, redirect_uri)
+	if ClientID == "" {
+		ClientID = os.Getenv("CLIENT_ID")
+	}
+	if RedirectURI == "" {
+		RedirectURI = os.Getenv("REDIRECT_URI")
+	}
+	url := fmt.Sprintf("https://app.clickup.com/api?client_id=%s&redirect_uri=%s", ClientID, RedirectURI)
 	OpenBrowser(url)
 }
