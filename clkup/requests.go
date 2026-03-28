@@ -107,7 +107,6 @@ func (c *APIClient) GetAuthorizedUser() (User, error) {
 	return userResponse.User, nil
 }
 
-// GetWorkspaceCustomFields retrieves all custom fields accessible at the Workspace (Team) level
 func (c *APIClient) GetWorkspaceCustomFields(team_id string) ([]CustomField, error) {
 	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/field", team_id)
 
@@ -134,7 +133,6 @@ func (c *APIClient) GetWorkspaceCustomFields(team_id string) ([]CustomField, err
 	return cfResp.Fields, nil
 }
 
-// GetSpaceCustomFields retrieves all custom fields accessible at the Space level
 func (c *APIClient) GetSpaceCustomFields(space_id string) ([]CustomField, error) {
 	url := fmt.Sprintf("https://api.clickup.com/api/v2/space/%s/field", space_id)
 
@@ -221,7 +219,6 @@ func (c *APIClient) GetPlan(teamID string) (PlanResponse, error) {
 		return PlanResponse{}, err
 	}
 
-	// Uses the centralized client so headers are injected automatically
 	resp, err := c.Do(req)
 	if err != nil {
 		return PlanResponse{}, err
@@ -387,7 +384,6 @@ func (c *APIClient) GetAllTasks(teamID string) ([]Task, error) {
 	taskChan := make(chan []Task, 100)
 	sem := make(chan struct{}, 20)
 
-	// Use an atomic flag instead of a context cancel to stop the loop safely
 	var done int32
 
 	go func() {
@@ -399,7 +395,6 @@ func (c *APIClient) GetAllTasks(teamID string) ([]Task, error) {
 	// start := time.Now()
 
 	for page := 0; ; page++ {
-		// Stop firing new requests if a previous goroutine hit the end
 		if atomic.LoadInt32(&done) == 1 {
 			break
 		}
@@ -417,12 +412,12 @@ func (c *APIClient) GetAllTasks(teamID string) ([]Task, error) {
 				errMu.Lock()
 				fetchErr = err
 				errMu.Unlock()
-				atomic.StoreInt32(&done, 1) // Stop the loop
+				atomic.StoreInt32(&done, 1)
 				return
 			}
 
 			if len(tasks) == 0 {
-				atomic.StoreInt32(&done, 1) // Reached the last page
+				atomic.StoreInt32(&done, 1)
 				return
 			}
 
@@ -432,9 +427,8 @@ func (c *APIClient) GetAllTasks(teamID string) ([]Task, error) {
 
 	wg.Wait()
 	close(taskChan)
-	time.Sleep(100 * time.Millisecond) // Let the append channel flush
+	time.Sleep(100 * time.Millisecond)
 
-	// If any of the page requests failed, bubble that error up!
 	if fetchErr != nil {
 		return nil, fetchErr
 	}
@@ -446,8 +440,6 @@ func (c *APIClient) GetAllTasks(teamID string) ([]Task, error) {
 	return allTasks, nil
 }
 
-// Notice we removed 'ctx'. We don't want an empty page cancelling
-// the HTTP requests of the pages that have actual data.
 func (c *APIClient) fetchPage(teamID string, page int) ([]Task, error) {
 	url := fmt.Sprintf("https://api.clickup.com/api/v2/team/%s/task?page=%d&include_closed=true&subtasks=true", teamID, page)
 

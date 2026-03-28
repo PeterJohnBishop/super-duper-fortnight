@@ -72,12 +72,10 @@ func (m dashboardModel) getLeftPane() ([]ListItem, string, int) {
 }
 
 func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
-	// 1. GLOBAL JSON OVERRIDE (Shift+J)
 	if m.showJSON {
 		return nil, "Raw JSON (Shift+J to toggle)", m.getHoveredRawJSON()
 	}
 
-	// 2. STANDARD VIEWS
 	switch m.depth {
 	case DepthWorkspaces:
 		if len(m.workspaces) > 0 {
@@ -120,7 +118,6 @@ func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
 			}
 			return items, "Lists", ""
 		} else {
-			// Hovering over a folderless list (Preview)
 			idx := m.cursorFolder - len(folders)
 			lists := m.db.GetFolderlessLists(string(space.ID))
 			if idx >= 0 && idx < len(lists) {
@@ -155,13 +152,11 @@ func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
 		if t != nil {
 			var sb strings.Builder
 
-			// Header Info
 			sb.WriteString(fmt.Sprintf("Name:   %s\n", t.Name))
 			sb.WriteString(fmt.Sprintf("Status: %s\n", strings.ToUpper(t.Status.Status)))
 			sb.WriteString(fmt.Sprintf("ID:     %s\n", t.Id))
 			sb.WriteString("\n--- Dates ---\n")
 
-			// Timezone Aware Dates
 			tz := m.user.Timezone
 			sb.WriteString(fmt.Sprintf("Created: %s\n", formatClickUpDate(t.DateCreated, tz)))
 			sb.WriteString(fmt.Sprintf("Updated: %s\n", formatClickUpDate(t.DateUpdated, tz)))
@@ -173,11 +168,9 @@ func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
 				sb.WriteString(fmt.Sprintf("Due:     %s\n", formatClickUpDate(t.DueDate, tz)))
 			}
 
-			// Custom Fields Column Formatting
 			if len(t.CustomFields) > 0 {
 				sb.WriteString("\n--- Custom Fields ---\n")
 
-				// 1. Find the longest field name to calculate padding
 				var maxNameLen int
 				for _, cf := range t.CustomFields {
 					if len(cf.Name) > maxNameLen {
@@ -185,7 +178,6 @@ func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
 					}
 				}
 
-				// 2. Print Key: Value pairs with perfect alignment
 				for _, cf := range t.CustomFields {
 					valStr := formatCustomFieldValue(cf, tz)
 					// The %-*s format syntax dynamically pads strings with spaces based on maxNameLen
@@ -193,7 +185,6 @@ func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
 				}
 			}
 
-			// Description
 			sb.WriteString("\n--- Description ---\n")
 			if t.Description == "" {
 				sb.WriteString("No description provided.")
@@ -238,7 +229,6 @@ func (m dashboardModel) getStats() (spaces, folders, lists, tasks string) {
 		return "-", "-", "-", "-"
 	}
 
-	// Leveraging SQLite COUNT() for instant stats without unmarshaling JSON
 	switch m.depth {
 	case DepthWorkspaces:
 		var sCount, fCount, lCount, tCount int
@@ -491,7 +481,7 @@ func renderPane(items []ListItem, title string, rawText string, cursor int, scro
 		title = string(titleRunes[:innerW-1]) + "…"
 	}
 	uiLines = append(uiLines, titleStyle.Render(title))
-	uiLines = append(uiLines, "") // Spacer line
+	uiLines = append(uiLines, "")
 
 	if rawText != "" {
 		lines := strings.Split(rawText, "\n")
@@ -647,7 +637,6 @@ func (m dashboardModel) getHoveredRawJSON() string {
 		var raw string
 		err := m.db.QueryRow(fmt.Sprintf(`SELECT raw_data FROM %s WHERE id = ?`, tableName), id).Scan(&raw)
 		if err == nil {
-			// Unmarshal and Re-marshal to get pretty indentation
 			var obj map[string]interface{}
 			json.Unmarshal([]byte(raw), &obj)
 			b, _ := json.MarshalIndent(obj, "", "  ")
@@ -691,7 +680,7 @@ func formatCustomFieldValue(cf clkup.CustomField, tz string) string {
 				if cf.TypeConfig.Options[i].Name != "" {
 					return cf.TypeConfig.Options[i].Name
 				}
-				return cf.TypeConfig.Options[i].Label // Fallback just in case
+				return cf.TypeConfig.Options[i].Label
 			}
 		}
 
@@ -806,7 +795,6 @@ func formatClickUpUser(m map[string]interface{}) string {
 		idStr = idString
 	}
 
-	// example: "Peter Bishop (54098740) pbishop@clickup.com"
 	var parts []string
 	if username != "" {
 		parts = append(parts, username)

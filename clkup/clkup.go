@@ -24,7 +24,7 @@ func GetRateLimit(planID int) rate.Limit {
 		rpm = 1000
 	case 4:
 		rpm = 10000
-	default: // Free, Unlimited, or unknown
+	default:
 		rpm = 100
 	}
 	safeRpm := float64(rpm) * 0.95
