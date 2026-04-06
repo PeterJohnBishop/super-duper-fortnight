@@ -44,3 +44,5 @@ type ListItem struct {
 	Subtitle string
 	Ref      any
 }
+
+type clearCopyMsg struct{}

@@ -8,6 +8,7 @@ import (
 	"goclicu/clkup"
 	"goclicu/dbstore"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -88,8 +89,12 @@ type dashboardModel struct {
 	cursorTask       int
 	taskScrollOffset int
 
-	showJSON   bool
 	focusRight bool
+
+	// JSON Popup State
+	showJSONPopup    bool
+	jsonScrollOffset int
+	jsonCopied       bool
 
 	// Data Store
 	user         clkup.User
@@ -106,16 +111,16 @@ func InitialModel(client *clkup.APIClient, db *dbstore.DB) dashboardModel {
 	client.LogChan = logChan
 
 	return dashboardModel{
-		apiClient:    client,
-		db:           db,
-		spinner:      s,
-		state:        stateInit,
-		status:       "Fetching User and Workspace data...",
-		logChan:      logChan,
-		teamPerf:     make(map[string]clkup.Performance),
-		showJSON:     false,
-		focusRight:   false,
-		syncInterval: SyncOff,
+		apiClient:     client,
+		db:            db,
+		spinner:       s,
+		state:         stateInit,
+		status:        "Fetching User and Workspace data...",
+		logChan:       logChan,
+		teamPerf:      make(map[string]clkup.Performance),
+		showJSONPopup: false,
+		focusRight:    false,
+		syncInterval:  SyncOff,
 	}
 }
 
@@ -133,6 +138,14 @@ func waitForLog(c chan string) tea.Cmd {
 	}
 }
 
+func (m dashboardModel) getCurrentJSON() string {
+	_, _, rightRawText := m.getRightPane()
+	if rightRawText == "" {
+		return "{\n  \"error\": \"No JSON data available for this selection.\"\n}"
+	}
+	return rightRawText
+}
+
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
@@ -141,6 +154,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		return m, nil
+
+	case clearCopyMsg:
+		m.jsonCopied = false
 		return m, nil
 
 	case tea.KeyMsg:
@@ -169,12 +186,39 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "tab":
-			// Toggle focus between left and right panes
-			m.focusRight = !m.focusRight
+		// not neded at this time, uncomment for right pane focus if needed
+		// case "tab":
+		// 	// Toggle focus between left and right panes
+		// 	m.focusRight = !m.focusRight
+		// 	return m, nil
+
+		case "J": // Shift + j
+			m.showJSONPopup = !m.showJSONPopup
+			m.jsonScrollOffset = 0
+			m.jsonCopied = false
+			return m, nil
+
+		case "S": // Shift + s
+			if m.showJSONPopup {
+				rawJSON := m.getCurrentJSON()
+				err := clipboard.WriteAll(rawJSON)
+				if err == nil {
+					m.jsonCopied = true
+					return m, tea.Tick(time.Second*3, func(t time.Time) tea.Msg {
+						return clearCopyMsg{}
+					})
+				} else {
+					m.logs = append(m.logs, fmt.Sprintf("Clipboard error: %v", err))
+				}
+			}
 			return m, nil
 
 		case "j", "down":
+			if m.showJSONPopup {
+				m.jsonScrollOffset++
+				return m, nil
+			}
+
 			if m.depth == DepthTaskDetails || m.focusRight {
 				m.taskScrollOffset++
 				return m, nil
@@ -214,19 +258,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.taskScrollOffset = 0
 
-		case "J": // Shift + j
-			m.showJSON = !m.showJSON
-			m.taskScrollOffset = 0
-			if !m.showJSON {
-				m.focusRight = false
-			}
-			return m, nil
-
 		case "pgdown", "ctrl+d":
+			if m.showJSONPopup {
+				m.jsonScrollOffset += 10
+				return m, nil
+			}
 			m.taskScrollOffset += 10
 			return m, nil
 
 		case "pgup", "ctrl+u":
+			if m.showJSONPopup {
+				if m.jsonScrollOffset > 10 {
+					m.jsonScrollOffset -= 10
+				} else {
+					m.jsonScrollOffset = 0
+				}
+				return m, nil
+			}
 			if m.taskScrollOffset > 10 {
 				m.taskScrollOffset -= 10
 			} else {
@@ -235,6 +283,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "k", "up":
+			if m.showJSONPopup {
+				if m.jsonScrollOffset > 0 {
+					m.jsonScrollOffset--
+				}
+				return m, nil
+			}
+
 			if m.depth == DepthTaskDetails || m.focusRight {
 				if m.taskScrollOffset > 0 {
 					m.taskScrollOffset--
@@ -272,6 +327,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskScrollOffset = 0
 
 		case "l", "right", "enter", " ":
+			if m.showJSONPopup {
+				return m, nil
+			}
 			if m.depth == DepthTaskDetails || m.focusRight {
 				return m, nil
 			}
@@ -291,7 +349,6 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.state == stateIdle || m.state == stateLoaded {
 					selectedWS := string(m.workspaces[m.cursorWorkspace].ID)
 
-					// INSTANT SQLITE CHECK: Are there spaces saved for this team?
 					spaces := m.db.GetSpaces(selectedWS)
 					if len(spaces) > 0 {
 						m.activeTeamID = selectedWS
@@ -324,6 +381,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "h", "left", "esc", "backspace":
+			if m.showJSONPopup {
+				m.showJSONPopup = false
+				return m, nil
+			}
 
 			if m.focusRight {
 				m.focusRight = false
@@ -338,7 +399,6 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case DepthLists:
 				m.depth = DepthFolders
 			case DepthTasks:
-				// INSTANT SQLITE CHECK for back-navigation
 				spaces := m.db.GetSpaces(m.activeTeamID)
 				if len(spaces) > 0 && m.cursorSpace < len(spaces) {
 					sID := string(spaces[m.cursorSpace].ID)
@@ -355,7 +415,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.depth = DepthTasks
 				m.taskScrollOffset = 0
 			}
+
 		case "r":
+			if m.showJSONPopup {
+				return m, nil
+			}
 			// if viewing the main Workspaces screen, refresh user and Workspace data
 			if m.depth == DepthWorkspaces {
 				m.state = stateInit
@@ -370,6 +434,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.spinner.Tick, fetchPlanCmd(m.apiClient, m.activeTeamID))
 			}
 		case "F": // Shift + f
+			if m.showJSONPopup {
+				return m, nil
+			}
 			switch m.syncInterval {
 			case SyncOff:
 				m.syncInterval = Sync5Min
@@ -381,7 +448,6 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncInterval = SyncOff
 			}
 
-			// If we just turned it on, kick off the timer immediately
 			if m.syncInterval != SyncOff {
 				return m, tickAutoSync(m.syncInterval.Duration())
 			}
@@ -548,15 +614,15 @@ func (m dashboardModel) View() string {
 	logContent := strings.Join(safeLogs, "\n")
 	bottomPane := logBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, logTitle, logContent))
 
-	helpStr := "Nav: h j k l | Back: esc | Select: enter | JSON: Shift+J | Focus: tab | Sync: r | Cycle Auto-Sync: SHIFT+F | Open: o | Quit: q"
+	helpStr := "Nav: h j k l | Back: esc | Select: enter | JSON: Shift+J | Sync: r | Cycle Auto-Sync: SHIFT+F | Open: o | Quit: q"
 
 	if lipgloss.Width(helpStr) > safeTextWidth {
 		// Medium width fallback
-		helpStr = "Nav: hjkl | esc: back | enter: sel | J: json | tab: focus | r: sync | F: auto-sync | o: open | q: quit"
+		helpStr = "Nav: hjkl | esc: back | enter: sel | J: json | r: sync | F: auto-sync | o: open | q: quit"
 
 		if lipgloss.Width(helpStr) > safeTextWidth {
 			// Small width fallback
-			helpStr = "hjkl:nav | esc:back | enter:sel | J:json | tab:focus | r:sync | F:auto-sync | o:web | q:quit"
+			helpStr = "hjkl:nav | esc:back | enter:sel | J:json | r:sync | F:auto-sync | o:web | q:quit"
 
 			if lipgloss.Width(helpStr) > safeTextWidth {
 				// Extreme squish fallback
@@ -638,11 +704,76 @@ func (m dashboardModel) View() string {
 	leftPane := renderPane(leftItems, leftTitle, "", leftCursor, 0, paneWidthLeft, paneHeight, leftActive)
 	rightPane := renderPane(rightItems, rightTitle, rightRawText, -1, m.taskScrollOffset, paneWidthRight, paneHeight, rightActive)
 
-	splitPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	var centerContent string
+
+	if m.showJSONPopup {
+		// Build the Modal Window
+		modalWidth := safeTextWidth - 4
+
+		// Modal Header text logic
+		headerText := "[ SHIFT+J: Close | SHIFT+S: Copy ]"
+		copiedStatus := ""
+		if m.jsonCopied {
+			copiedStatus = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#00FF00")).
+				Bold(true).
+				Render(" [ Copied to Clipboard! ]")
+		}
+
+		modalHeader := lipgloss.JoinHorizontal(lipgloss.Top, headerText, copiedStatus)
+
+		// Get your JSON data, split it into lines for scrolling
+		rawJSON := m.getCurrentJSON()
+		jsonLines := strings.Split(rawJSON, "\n")
+
+		// Handle scrolling limits
+		usableHeight := paneHeight - 3 // Account for header and borders
+		if usableHeight < 1 {
+			usableHeight = 1
+		}
+
+		maxScroll := len(jsonLines) - usableHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		if m.jsonScrollOffset > maxScroll {
+			m.jsonScrollOffset = maxScroll
+		}
+
+		// Slice the viewable lines
+		endIdx := m.jsonScrollOffset + usableHeight
+		if endIdx > len(jsonLines) {
+			endIdx = len(jsonLines)
+		}
+
+		var visibleJSON string
+		if len(jsonLines) > 0 && m.jsonScrollOffset <= endIdx {
+			visibleJSON = strings.Join(jsonLines[m.jsonScrollOffset:endIdx], "\n")
+		}
+
+		// Style the Modal Body
+		modalStyle := lipgloss.NewStyle().
+			Width(modalWidth).
+			Height(paneHeight-1). // Account for the header text we place above it
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#9D4EDD")).
+			Padding(0, 1)
+
+		// Stack the header text outside on top of the modal box
+		centerContent = lipgloss.JoinVertical(lipgloss.Center,
+			lipgloss.NewStyle().Width(modalWidth).Align(lipgloss.Center).Render(modalHeader),
+			modalStyle.Render(visibleJSON),
+		)
+
+	} else {
+		// Use standard split panes when popup is closed
+		splitPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+		centerContent = splitPanes
+	}
 
 	return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
 		topStack,
-		splitPanes,
+		centerContent,
 		bottomStack,
 	))
 }

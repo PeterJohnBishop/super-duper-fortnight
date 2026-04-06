@@ -67,3 +67,4 @@ func NewManualProgressField(current int) SetCustomFieldPayload {
 }
 
 // need to add geocoding and reverse geocoding API for location CFs
+// func NewLocationField()

@@ -72,7 +72,7 @@ func (m dashboardModel) getLeftPane() ([]ListItem, string, int) {
 }
 
 func (m dashboardModel) getRightPane() ([]ListItem, string, string) {
-	if m.showJSON {
+	if m.showJSONPopup {
 		return nil, "Raw JSON (Shift+J to toggle)", m.getHoveredRawJSON()
 	}
 
