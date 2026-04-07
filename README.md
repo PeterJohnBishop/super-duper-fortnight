@@ -34,13 +34,10 @@ Example of the same task (Workspace, Space, Folder, and List included) in raw JS
 # in progress
 
 - Some Custom Fields still default to RAW json, as I haven't added formatting for those types yet.
-- Add indicator that a Workspace is accessable, but data hasn't been pulled.
 - More dashboard cards/stats  
 - graphs that adjust over hierarchy selection and/or time range (slider?) like DataDog
 - Direct API Create, Update, and Delete options
 - Attachment viewer/previews
+- Support for Docs
 
-Looks great with [Posting](https://posting.sh/). Just sayin.
-
-![screenshot](https://github.com/PeterJohnBishop/CLI_ckUp/blob/main/Assets/with_posting.png?raw=true)
 
