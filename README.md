@@ -23,13 +23,13 @@ brew install PeterJohnBishop/tap/goclicu
 - SHIFT+F to cycle auto-sync OFF, 5m, 15m, or 30m
 - q to quitchos
 
-Example of a task:
+Example of a task: 
 
 ![screenshot](https://github.com/PeterJohnBishop/goclicu/blob/main/Assets/task_example.png?raw=true)
 
-Example of the same task in raw JSON mode:
+Example of the same task (Workspace, Space, Folder, and List included) in raw JSON view:
 
-![screenshot](https://github.com/PeterJohnBishop/goclicu/blob/main/Assets/json_example.png?raw=true)
+![screenshot](https://github.com/PeterJohnBishop/goclicu/blob/main/Assets/screenshot-2026-04-07_16-01-48.png?raw=true)
 
 # in progress
 
