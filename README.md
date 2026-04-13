@@ -40,4 +40,10 @@ Example of the same task (Workspace, Space, Folder, and List included) in raw JS
 - Attachment viewer/previews
 - Support for Docs
 
+# bugs
+- Folderless lists aren't appearing in the TUI
+    + update 'lists' table schema to add folder_hidden BOOL
+    + update lists upsert to add value for folder_hidden
+    + updatge GetFolderlessLists to look for lists where folder_hidden is TRUE
+
 

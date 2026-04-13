@@ -244,8 +244,9 @@ func (db *DB) GetFolders(spaceID string) []clkup.Folder {
 	return res
 }
 
+// update this since the Folder property of a List object does have an ID but I need to be looking for folder_name
 func (db *DB) GetFolderlessLists(spaceID string) []clkup.List {
-	rows, _ := db.Query(`SELECT raw_data FROM lists WHERE space_id = ? AND folder_id = '' ORDER BY name`, spaceID)
+	rows, _ := db.Query(`SELECT raw_data FROM lists WHERE space_id = ? AND folder_name = 'hidden' ORDER BY name`, spaceID)
 	defer rows.Close()
 	var res []clkup.List
 	for rows.Next() {
