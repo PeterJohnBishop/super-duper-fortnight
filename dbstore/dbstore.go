@@ -46,6 +46,7 @@ func InitDB(filepath string) (*DB, error) {
 	CREATE TABLE IF NOT EXISTS lists (
 		id TEXT PRIMARY KEY,
 		folder_id TEXT, 
+		hidden BOOL,
 		space_id TEXT NOT NULL,
 		name TEXT NOT NULL,
 		raw_data TEXT NOT NULL
@@ -170,17 +171,16 @@ func (db *DB) SyncWorkspaceData(teamID string, spaces []clkup.Space, folders []c
 	}
 
 	// Upsert Lists
-	listStmt, _ := tx.Prepare(`INSERT INTO lists (id, folder_id, space_id, name, raw_data) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET folder_id=excluded.folder_id, name=excluded.name, raw_data=excluded.raw_data;`)
+	listStmt, _ := tx.Prepare(`INSERT INTO lists (id, folder_id, hidden, space_id, name, raw_data) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET folder_id=excluded.folder_id, name=excluded.name, raw_data=excluded.raw_data;`)
 	defer listStmt.Close()
 	for _, l := range lists {
 		b, _ := json.Marshal(l)
 
-		// can be empty if it's a folderless list
 		folderID := ""
 		if l.Folder.Id != "" {
 			folderID = string(l.Folder.Id)
 		}
-		listStmt.Exec(string(l.ID), folderID, string(l.Space.Id), l.Name, string(b))
+		listStmt.Exec(string(l.ID), folderID, l.Folder.Hidden, string(l.Space.Id), l.Name, string(b))
 	}
 
 	// Upsert Tasks
@@ -246,7 +246,11 @@ func (db *DB) GetFolders(spaceID string) []clkup.Folder {
 
 // update this since the Folder property of a List object does have an ID but I need to be looking for folder_name
 func (db *DB) GetFolderlessLists(spaceID string) []clkup.List {
-	rows, _ := db.Query(`SELECT raw_data FROM lists WHERE space_id = ? AND folder_name = 'hidden' ORDER BY name`, spaceID)
+	rows, err := db.Query(`SELECT raw_data FROM lists WHERE space_id = ? AND hidden = 1 ORDER BY name`, spaceID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "DB Query Error: %v\n", err)
+		return nil
+	}
 	defer rows.Close()
 	var res []clkup.List
 	for rows.Next() {
