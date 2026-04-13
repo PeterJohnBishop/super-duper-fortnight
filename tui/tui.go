@@ -43,7 +43,10 @@ const (
 	stateFetchingPlan
 	stateFetchingData
 	stateLoaded
+	stateResetConfirm
 )
+
+type resetCompleteMsg struct{ err error }
 
 const (
 	DepthWorkspaces ViewDepth = iota
@@ -149,6 +152,22 @@ func (m dashboardModel) getCurrentJSON() string {
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
+	if m.state == stateResetConfirm {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "y", "Y":
+				m.state = stateInit
+				m.status = "Rebuilding database..."
+				return m, resetDatabaseCmd(m.db)
+			case "n", "N", "esc":
+				m.state = stateLoaded // Or return to previous state
+				return m, nil
+			}
+		}
+		return m, nil // Block other inputs while confirming
+	}
+
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
@@ -166,6 +185,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
+
+		case "ctrl+x": // Trigger Reset
+			m.state = stateResetConfirm
+			return m, nil
+
 		case "o":
 			url := m.getCurrentSelectionURL()
 			if url != "" {
@@ -454,6 +478,14 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+	case resetCompleteMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.status = "Database cleared. Re-fetching data..."
+		return m, fetchInitDataCmd(m.apiClient, m.db, true)
+
 	case spinner.TickMsg:
 		if m.state == stateInit || m.state == stateFetchingPlan || m.state == stateFetchingData {
 			m.spinner, cmd = m.spinner.Update(msg)
@@ -706,7 +738,32 @@ func (m dashboardModel) View() string {
 
 	var centerContent string
 
-	if m.showJSONPopup {
+	if m.state == stateResetConfirm {
+		modalWidth := 60
+		if modalWidth > safeTextWidth {
+			modalWidth = safeTextWidth
+		}
+
+		content := lipgloss.NewStyle().
+			Width(modalWidth).
+			Align(lipgloss.Center).
+			Render(
+				lipgloss.JoinVertical(lipgloss.Center,
+					lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render("⚠️  WARNING: DATABASE RESET"),
+					"\nThis will delete ALL locally cached tasks and settings.",
+					"The application will need to re-sync everything.",
+					"\nProceed? (y/n)",
+				),
+			)
+
+		modalStyle := lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(lipgloss.Color("#FF0000")).
+			Padding(1, 4)
+
+		centerContent = lipgloss.Place(m.width, paneHeight, lipgloss.Center, lipgloss.Center, modalStyle.Render(content))
+
+	} else if m.showJSONPopup {
 		modalWidth := safeTextWidth - 4
 
 		headerText := "[ SHIFT+J: Close | SHIFT+S: Copy ]"

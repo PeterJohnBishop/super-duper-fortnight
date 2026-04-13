@@ -15,13 +15,7 @@ type DB struct {
 	*sql.DB
 }
 
-func InitDB(filepath string) (*DB, error) {
-	db, err := sql.Open("sqlite", filepath)
-	if err != nil {
-		return nil, err
-	}
-
-	schema := `
+const schema = `
 	CREATE TABLE IF NOT EXISTS config (
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL
@@ -72,11 +66,43 @@ func InitDB(filepath string) (*DB, error) {
 	CREATE INDEX IF NOT EXISTS idx_tasks_list ON tasks(list_id);
 	`
 
+func InitDB(filepath string) (*DB, error) {
+	db, err := sql.Open("sqlite", filepath)
+	if err != nil {
+		return nil, err
+	}
+
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
 	return &DB{db}, nil
+}
+
+func (db *DB) RebuildDatabase() error {
+
+	tables := []string{
+		"tasks",
+		"lists",
+		"folders",
+		"spaces",
+		"workspaces",
+		"custom_fields",
+		"config",
+	}
+
+	for _, table := range tables {
+		_, err := db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", table))
+		if err != nil {
+			return fmt.Errorf("failed to drop table %s: %w", table, err)
+		}
+	}
+
+	if _, err := db.Exec(schema); err != nil {
+		return fmt.Errorf("failed to rebuild schema: %w", err)
+	}
+
+	return nil
 }
 
 func (db *DB) SaveToken(token string) error {

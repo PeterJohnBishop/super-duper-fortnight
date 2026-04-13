@@ -74,6 +74,13 @@ func fetchInitDataCmd(client *clkup.APIClient, db *dbstore.DB, forceFetch bool) 
 	}
 }
 
+func resetDatabaseCmd(db *dbstore.DB) tea.Cmd {
+	return func() tea.Msg {
+		err := db.RebuildDatabase()
+		return resetCompleteMsg{err: err}
+	}
+}
+
 func fetchHierarchyCmd(client *clkup.APIClient, db *dbstore.DB, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
