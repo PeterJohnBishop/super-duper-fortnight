@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"goclicu/clkup"
@@ -152,6 +151,7 @@ func (m dashboardModel) getCurrentJSON() string {
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
+	// popup for clearing database
 	if m.state == stateResetConfirm {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -564,261 +564,44 @@ func (m dashboardModel) View() string {
 		safeTextWidth = 20
 	}
 
-	// 2. HEADER
-	var header string
-	if m.state != stateInit {
-		headerInnerWidth := safeTextWidth - 2
+	// HEADER //
+	header := buildHeader(m, safeTextWidth)
 
-		leftSide := fmt.Sprintf("%s | %s - %s", m.user.ID, m.user.Initials, m.user.Email)
-		rightTop := fmt.Sprintf("[%s]", m.user.Timezone)
+	// HIERARCHY STATS //
+	statsRow := buildHierarchyStats(m)
 
-		syncColor := "#5A189A"
-		if m.syncInterval != SyncOff {
-			syncColor = "#00FF00"
-		}
-		rightBot := lipgloss.NewStyle().Foreground(lipgloss.Color(syncColor)).Render(m.syncInterval.String())
+	// HIERARCHY BREADCRUMBS //
+	breadcrumbs := lipgloss.NewStyle().MarginBottom(1).Render(m.getBreadcrumbs(safeTextWidth))
 
-		leftW := lipgloss.Width(leftSide)
-		rightTopW := lipgloss.Width(rightTop)
+	topStack := lipgloss.JoinVertical(lipgloss.Left, header, statsRow, breadcrumbs)
 
-		if leftW+rightTopW >= headerInnerWidth {
-			availLeft := headerInnerWidth - rightTopW - 1
-			if availLeft > 3 {
-				runes := []rune(leftSide)
-				leftSide = string(runes[:availLeft-1]) + "…"
-			} else {
-				leftSide = ""
-			}
-		}
+	// EVENT LOGS //
+	logs := buildLogsDisplay(m, safeTextWidth)
 
-		leftW = lipgloss.Width(leftSide)
-		spaceCountTop := headerInnerWidth - leftW - rightTopW
-		if spaceCountTop < 0 {
-			spaceCountTop = 0
-		}
-		line1 := leftSide + strings.Repeat(" ", spaceCountTop) + rightTop
+	// KEYBINDINGS //
+	helpText := buildKeybindings(safeTextWidth)
 
-		rightBotW := lipgloss.Width(rightBot)
-		spaceCountBot := headerInnerWidth - rightBotW
-		if spaceCountBot < 0 {
-			spaceCountBot = 0
-		}
-		line2 := strings.Repeat(" ", spaceCountBot) + rightBot
-
-		headerStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E0AAFF")).
-			Padding(0, 1).
-			MarginBottom(1).
-			Italic(true)
-
-		headerContent := line1 + "\n" + line2
-		header = headerStyle.Render(headerContent)
-	}
-
-	logInnerWidth := safeTextWidth - 4
-	if logInnerWidth < 10 {
-		logInnerWidth = 10
-	}
-
-	logBoxStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Width(logInnerWidth).
-		Height(4).
-		Padding(0, 1)
-
-	logTitle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("--- Live API Event Log ---")
-
-	displayLogs := m.logs
-	if len(displayLogs) > 3 {
-		displayLogs = displayLogs[len(displayLogs)-3:]
-	}
-
-	var safeLogs []string
-	for _, l := range displayLogs {
-		runes := []rune(l)
-		if len(runes) > logInnerWidth {
-			safeLogs = append(safeLogs, string(runes[:logInnerWidth-3])+"...")
-		} else {
-			safeLogs = append(safeLogs, l)
-		}
-	}
-	logContent := strings.Join(safeLogs, "\n")
-	bottomPane := logBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, logTitle, logContent))
-
-	helpStr := "Nav: h j k l | Back: esc | Select: enter | JSON: Shift+J | Sync: r | Cycle Auto-Sync: SHIFT+F | Open: o | Quit: q | Reset Database: CTRL+X"
-
-	if lipgloss.Width(helpStr) > safeTextWidth {
-		// Medium width fallback
-		helpStr = "Nav: hjkl | esc: back | enter: sel | J: json | r: sync | F: auto-sync | o: open | q: quit | ctrl+x: reset data"
-
-		if lipgloss.Width(helpStr) > safeTextWidth {
-			// Small width fallback
-			helpStr = "hjkl:nav | esc:back | enter:sel | J:json | r:sync | F:auto-sync | o:web | q:quit | ctrl+x:reset"
-
-			if lipgloss.Width(helpStr) > safeTextWidth {
-				// Extreme squish fallback
-				runes := []rune(helpStr)
-				helpStr = string(runes[:safeTextWidth-1]) + "…"
-			}
-		}
-	}
-	helpText := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MarginBottom(1).Render(helpStr)
-
-	var footer string
-	if (m.state == stateLoaded || m.state == stateIdle) && m.activeTeamID != "" {
-		if perf, ok := m.teamPerf[m.activeTeamID]; ok {
-			perfText := fmt.Sprintf("Last fetch completed in %s | Tasks Per Second: %s | Est. RPM: %s",
-				perf.Duration, perf.TPS, perf.RPM)
-			if lipgloss.Width(perfText) > safeTextWidth {
-				runes := []rune(perfText)
-				perfText = string(runes[:safeTextWidth-1]) + "…"
-			}
-			footer = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#E0AAFF")).
-				MarginTop(1).
-				Italic(true).
-				Render(perfText)
-		}
-	}
+	// FOOTER //
+	footer := buildFooter(m, safeTextWidth)
 
 	var bottomStack string
 	if footer != "" {
-		bottomStack = lipgloss.JoinVertical(lipgloss.Left, helpText, bottomPane, footer)
+		bottomStack = lipgloss.JoinVertical(lipgloss.Left, helpText, logs, footer)
 	} else {
-		bottomStack = lipgloss.JoinVertical(lipgloss.Left, helpText, bottomPane)
+		bottomStack = lipgloss.JoinVertical(lipgloss.Left, helpText, logs)
 	}
 
 	if m.state == stateInit || m.state == stateFetchingPlan || m.state == stateFetchingData {
 		loadingContent := lipgloss.NewStyle().Margin(2, 0).Render(fmt.Sprintf("%s %s", m.spinner.View(), m.status))
 		if footer != "" {
-			return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, loadingContent, bottomPane, footer))
+			return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, loadingContent, logs, footer))
 		}
-		return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, loadingContent, bottomPane))
+		return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, loadingContent, logs))
 	}
-
-	sCount, fCount, lCount, tCount := m.getStats()
-	statSpaces := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Spaces"), statValueStyle.Render(sCount)))
-	statFolders := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Folders"), statValueStyle.Render(fCount)))
-	statLists := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Lists"), statValueStyle.Render(lCount)))
-	statTasks := statBoxStyle.Render(fmt.Sprintf("%s\n%s", statLabelStyle.Render("Tasks"), statValueStyle.Render(tCount)))
-
-	statsRow := lipgloss.NewStyle().MarginBottom(1).Render(
-		lipgloss.JoinHorizontal(lipgloss.Top, statSpaces, statFolders, statLists, statTasks),
-	)
-
-	breadcrumbs := lipgloss.NewStyle().MarginBottom(1).Render(m.getBreadcrumbs(safeTextWidth))
-
-	topStack := lipgloss.JoinVertical(lipgloss.Left, header, statsRow, breadcrumbs)
 
 	occupiedHeight := lipgloss.Height(topStack) + lipgloss.Height(bottomStack)
 
-	paneHeight := m.height - occupiedHeight - 1
-	if paneHeight < 5 {
-		paneHeight = 5
-	}
-
-	paneWidthLeft := safeTextWidth / 2
-	paneWidthRight := safeTextWidth - paneWidthLeft
-
-	if paneWidthLeft < 10 {
-		paneWidthLeft = 10
-	}
-	if paneWidthRight < 10 {
-		paneWidthRight = 10
-	}
-
-	leftItems, leftTitle, leftCursor := m.getLeftPane()
-	rightItems, rightTitle, rightRawText := m.getRightPane()
-
-	leftActive := !m.focusRight && (m.depth != DepthTaskDetails)
-	rightActive := m.focusRight || (m.depth == DepthTaskDetails)
-	leftPane := renderPane(leftItems, leftTitle, "", leftCursor, 0, paneWidthLeft, paneHeight, leftActive)
-	rightPane := renderPane(rightItems, rightTitle, rightRawText, -1, m.taskScrollOffset, paneWidthRight, paneHeight, rightActive)
-
-	var centerContent string
-
-	if m.state == stateResetConfirm {
-		modalWidth := 60
-		if modalWidth > safeTextWidth {
-			modalWidth = safeTextWidth
-		}
-
-		content := lipgloss.NewStyle().
-			Width(modalWidth).
-			Align(lipgloss.Center).
-			Render(
-				lipgloss.JoinVertical(lipgloss.Center,
-					lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render("⚠️  WARNING: DATABASE RESET"),
-					"\nThis will delete ALL locally cached tasks and settings.",
-					"The application will need to re-sync everything.",
-					"\nProceed? (y/n)",
-				),
-			)
-
-		modalStyle := lipgloss.NewStyle().
-			Border(lipgloss.DoubleBorder()).
-			BorderForeground(lipgloss.Color("#FF0000")).
-			Padding(1, 4)
-
-		centerContent = lipgloss.Place(m.width, paneHeight, lipgloss.Center, lipgloss.Center, modalStyle.Render(content))
-
-	} else if m.showJSONPopup {
-		modalWidth := safeTextWidth - 4
-
-		headerText := "[ SHIFT+J: Close | SHIFT+S: Copy ]"
-		copiedStatus := ""
-		if m.jsonCopied {
-			copiedStatus = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#00FF00")).
-				Bold(true).
-				Render(" [ Copied to Clipboard! ]")
-		}
-
-		modalHeader := lipgloss.JoinHorizontal(lipgloss.Top, headerText, copiedStatus)
-
-		rawJSON := m.getCurrentJSON()
-		jsonLines := strings.Split(rawJSON, "\n")
-
-		usableHeight := paneHeight - 3
-		if usableHeight < 1 {
-			usableHeight = 1
-		}
-
-		maxScroll := len(jsonLines) - usableHeight
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
-		if m.jsonScrollOffset > maxScroll {
-			m.jsonScrollOffset = maxScroll
-		}
-
-		endIdx := m.jsonScrollOffset + usableHeight
-		if endIdx > len(jsonLines) {
-			endIdx = len(jsonLines)
-		}
-
-		var visibleJSON string
-		if len(jsonLines) > 0 && m.jsonScrollOffset <= endIdx {
-			visibleJSON = strings.Join(jsonLines[m.jsonScrollOffset:endIdx], "\n")
-		}
-
-		modalStyle := lipgloss.NewStyle().
-			Width(modalWidth).
-			Height(paneHeight-2).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#9D4EDD")).
-			Padding(0, 1)
-
-		centerContent = lipgloss.JoinVertical(lipgloss.Center,
-			lipgloss.NewStyle().Width(modalWidth).Align(lipgloss.Center).Render(modalHeader),
-			modalStyle.Render(visibleJSON),
-		)
-
-	} else {
-		splitPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-		centerContent = splitPanes
-	}
+	centerContent := buildCenterContent(m, occupiedHeight, safeTextWidth)
 
 	return baseStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
 		topStack,
